@@ -2196,4 +2196,9 @@
   - GitHub 认证只允许在本机 Git Credential Manager 或浏览器授权中完成，不在聊天、日志或源码中传递密码和 Token；
   - 曾经暴露在聊天中的 RAGFlow API Key 应在管理后台撤销并轮换，新 Key 只保存在未跟踪的 `.env` 中；
   - 示例环境变量仅用于说明配置项，生产部署必须使用 Secret Manager 或部署平台密钥注入并设置随机强凭据。
-- 阶段结论：首次提交内容已完成安全预检，可执行暂存、提交、推送和远程分支验证。
+- 发布结果：
+  - 首次源码提交：`991b9ab feat: initialize uPil multi-agent education service`；
+  - `main` 已成功推送到 GitHub，并设置为跟踪 `origin/main`；
+  - 远程传输共写入 219 个 Git 对象，GitHub 已成功接收并解析；
+  - 发布过程未要求在聊天中传递账号、密码或访问令牌。
+- 阶段结论：Git 初始化、安全排除、首次提交和 GitHub 发布均已完成。后续开发应采用小步提交、测试后推送，并在 CI 中复用敏感信息扫描和全量测试。

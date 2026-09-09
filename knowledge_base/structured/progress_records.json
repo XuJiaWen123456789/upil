@@ -1,0 +1,24 @@
+[
+  {
+    "learner_id": "L1001",
+    "course_id": "COURSE_DANCE",
+    "course_name": "中国舞基础",
+    "current_stage": "基础节奏与身体协调",
+    "completion_rate": 0.4,
+    "strengths": ["节奏模仿积极", "课堂参与度稳定"],
+    "next_focus": ["加强基本站姿", "练习动作连贯性"],
+    "teacher_note": "建议每周完成两次十分钟基础拉伸，在家练习时由家长陪同并注意安全。",
+    "updated_at": "2026-08-29"
+  },
+  {
+    "learner_id": "L2001",
+    "course_id": "COURSE_DANCE",
+    "course_name": "中国舞进阶",
+    "current_stage": "组合动作与舞台表现",
+    "completion_rate": 0.65,
+    "strengths": ["动作记忆较好", "愿意主动展示"],
+    "next_focus": ["提升动作力度", "保持队形间距"],
+    "teacher_note": "近期可参加小组展示排练，正式演出安排以校区通知为准。",
+    "updated_at": "2026-08-30"
+  }
+]

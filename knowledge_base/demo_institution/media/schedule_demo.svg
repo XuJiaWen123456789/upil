@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="720" viewBox="0 0 1200 720" role="img" aria-labelledby="title desc">
+  <title id="title">周末课程安排演示表</title>
+  <desc id="desc">星河素质教育中心周末课程安排的虚构演示表格</desc>
+  <rect width="1200" height="720" fill="#f6f8f7"/>
+  <text x="600" y="70" text-anchor="middle" font-family="Microsoft YaHei, sans-serif" font-size="34" fill="#27464d">周末课程安排演示表</text>
+  <rect x="110" y="130" width="980" height="420" fill="#ffffff" stroke="#7ea3a4" stroke-width="4"/>
+  <rect x="110" y="130" width="980" height="72" fill="#3f7880"/>
+  <g font-family="Microsoft YaHei, sans-serif" font-size="24" fill="#ffffff" text-anchor="middle">
+    <text x="270" y="176">时间</text><text x="530" y="176">教室 A</text><text x="800" y="176">教室 B</text><text x="1010" y="176">教室 C</text>
+  </g>
+  <g stroke="#9cb5b3" stroke-width="3">
+    <path d="M110 202h980M110 318h980M110 434h980M390 130v420M670 130v420M930 130v420"/>
+  </g>
+  <g font-family="Microsoft YaHei, sans-serif" font-size="22" fill="#29464c" text-anchor="middle">
+    <text x="250" y="270">周六 09:00-09:45</text><text x="530" y="270">舞蹈启蒙</text><text x="800" y="270">美术创意</text><text x="1010" y="270">空闲</text>
+    <text x="250" y="386">周六 10:00-11:00</text><text x="530" y="386">中国舞基础</text><text x="800" y="386">美术创意</text><text x="1010" y="386">编程基础</text>
+    <text x="250" y="502">周日 14:00-15:00</text><text x="530" y="502">中国舞基础</text><text x="800" y="502">空闲</text><text x="1010" y="502">编程基础</text>
+  </g>
+  <text x="600" y="625" text-anchor="middle" font-family="Microsoft YaHei, sans-serif" font-size="22" fill="#667b7e">虚构演示数据 · 不是实时课表</text>
+</svg>

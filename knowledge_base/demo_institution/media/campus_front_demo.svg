@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="720" viewBox="0 0 1200 720" role="img" aria-labelledby="title desc">
+  <title id="title">星河中心校区环境演示图</title>
+  <desc id="desc">星河素质教育中心前台、舞蹈教室、美术活动区和编程教室的虚构环境插图</desc>
+  <rect width="1200" height="720" fill="#edf3f1"/>
+  <rect y="430" width="1200" height="290" fill="#d8e2df"/>
+  <rect x="110" y="150" width="980" height="340" rx="12" fill="#ffffff" stroke="#9fb4b0" stroke-width="5"/>
+  <path d="M110 150h980l-55-90H165z" fill="#3f7880"/>
+  <text x="600" y="125" text-anchor="middle" font-family="Microsoft YaHei, sans-serif" font-size="34" fill="#ffffff">星河素质教育中心</text>
+  <rect x="170" y="220" width="230" height="205" fill="#b8d6de" stroke="#6d969e" stroke-width="4"/>
+  <rect x="485" y="220" width="230" height="205" fill="#d7c9aa" stroke="#a79570" stroke-width="4"/>
+  <rect x="800" y="220" width="230" height="205" fill="#c4d7be" stroke="#7f9d76" stroke-width="4"/>
+  <text x="285" y="465" text-anchor="middle" font-family="Microsoft YaHei, sans-serif" font-size="24" fill="#294a55">接待区</text>
+  <text x="600" y="465" text-anchor="middle" font-family="Microsoft YaHei, sans-serif" font-size="24" fill="#5c4f37">舞蹈教室</text>
+  <text x="915" y="465" text-anchor="middle" font-family="Microsoft YaHei, sans-serif" font-size="24" fill="#41583b">活动与编程区</text>
+  <circle cx="232" cy="300" r="36" fill="#ffffff" stroke="#6d969e" stroke-width="5"/>
+  <path d="M215 350h34l18 55h-70z" fill="#6d969e"/>
+  <path d="M510 360h180M520 330h160M550 300h100" stroke="#a79570" stroke-width="12" stroke-linecap="round"/>
+  <rect x="850" y="280" width="130" height="90" rx="8" fill="#ffffff" stroke="#7f9d76" stroke-width="5"/>
+  <rect x="875" y="390" width="80" height="12" rx="6" fill="#7f9d76"/>
+  <text x="600" y="650" text-anchor="middle" font-family="Microsoft YaHei, sans-serif" font-size="22" fill="#526965">虚构演示环境图 · 实际教室安排以教务系统为准</text>
+</svg>

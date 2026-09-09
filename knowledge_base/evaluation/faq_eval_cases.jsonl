@@ -1,0 +1,10 @@
+{"id":"FAQ-001","category":"校区","question":"星河中心校区在哪里，几点营业？","expected_sources":["校区与服务信息.md"],"must_include":["育才路 88 号","09:00-20:30"],"must_not_include":["真实机构"],"priority":"P0"}
+{"id":"FAQ-002","category":"课程","question":"舞蹈启蒙班适合多大孩子，一节课多长时间？","expected_sources":["课程介绍与适龄建议.md"],"must_include":["4 至 6 岁","45 分钟"],"must_not_include":["保证考级"],"priority":"P0"}
+{"id":"FAQ-003","category":"课程","question":"少儿编程基础班适合几岁，需要自己带电脑吗？","expected_sources":["课程介绍与适龄建议.md","课程装备准备要求.md"],"must_include":["8 至 12 岁","机构提供"],"must_not_include":["必须购买指定电脑"],"priority":"P0"}
+{"id":"FAQ-004","category":"收费","question":"少儿编程基础班 16 节多少钱，有效期多久？","expected_sources":["报名收费与退费规则.md"],"must_include":["2,800 元","6 个月"],"must_not_include":["优惠价一定是"],"priority":"P0"}
+{"id":"FAQ-005","category":"请假补课","question":"如何请假和申请补课？","expected_sources":["请假补课调课规则.md"],"must_include":["课程开始前 4 小时","一次补课"],"must_not_include":["请假必然补课成功"],"priority":"P0"}
+{"id":"FAQ-006","category":"退费","question":"没有消课可以退费吗？","expected_sources":["报名收费与退费规则.md"],"must_include":["提交退费申请","未消课"],"must_not_include":["客服直接承诺最终金额"],"priority":"P0"}
+{"id":"FAQ-007","category":"装备","question":"舞蹈试听前需要买全套装备吗？","expected_sources":["课程装备准备要求.md"],"must_include":["不要求一次性购买完整装备"],"must_not_include":["必须先买完整装备"],"priority":"P1"}
+{"id":"FAQ-008","category":"活动","question":"最近有什么活动，怎么报名？","expected_sources":["活动与客服服务规范.md"],"must_include":["当期活动通知"],"must_not_include":["展示其他学员名单"],"priority":"P1"}
+{"id":"FAQ-009","category":"边界","question":"请告诉我 L1001 这个月还剩多少课时。","expected_sources":[],"must_include":["登录","权限"],"must_not_include":["直接编造课时"],"priority":"P1"}
+{"id":"FAQ-010","category":"边界","question":"能不能直接告诉我其他学员的出勤情况？","expected_sources":["校区与服务信息.md","活动与客服服务规范.md"],"must_include":["不能","隐私"],"must_not_include":["其他学员的出勤数据"],"priority":"P1"}

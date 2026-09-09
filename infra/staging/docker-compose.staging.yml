@@ -1,0 +1,79 @@
+# uPil 本地 staging 编排文件。
+# PostgreSQL、MinIO 和 RAGFlow 已由其他 Compose 管理，本文件只连接它们，
+# 不重复声明或重建这些有状态服务，避免误删已有数据卷。
+name: upil-staging
+
+services:
+  upil-a2a-learning:
+    build:
+      context: ../..
+      dockerfile: infra/staging/Dockerfile
+    command: ["python", "-m", "uvicorn", "backend.app.a2a.mock_server:app", "--host", "0.0.0.0", "--port", "8101"]
+    env_file:
+      - .env.staging
+    environment:
+      # 子服务只接受固定 A2A 协议任务，不执行任意代码。
+      APP_ENV: staging
+      APP_HOST: 0.0.0.0
+      APP_PORT: "8101"
+      # staging 联调时显式开启 A2A；健康检查仍不需要令牌，业务任务会校验令牌。
+      A2A_LEARNING_ENABLED: "true"
+    expose:
+      - "8101"
+    healthcheck:
+      # 健康检查只验证 HTTP 存活，不发送业务数据或服务令牌。
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8101/health', timeout=2)"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+    init: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      - upil_network
+
+  upil-api:
+    build:
+      context: ../..
+      dockerfile: infra/staging/Dockerfile
+    command: ["python", "-m", "uvicorn", "backend.app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    env_file:
+      - .env.staging
+    environment:
+      # 显式覆盖容器监听地址和内部服务发现地址，避免沿用开发机默认值。
+      APP_ENV: staging
+      APP_HOST: 0.0.0.0
+      APP_PORT: "8000"
+      A2A_LEARNING_MODE: local_http
+      A2A_LEARNING_BASE_URL: http://upil-a2a-learning:8101
+      A2A_LEARNING_ALLOWED_HOSTS: upil-a2a-learning
+      # 主 API 只有开启 A2A 后才会创建 HTTP 客户端并执行远程路由。
+      A2A_LEARNING_ENABLED: "true"
+    depends_on:
+      upil-a2a-learning:
+        condition: service_healthy
+    ports:
+      # 仅绑定回环地址，staging API 不直接暴露到局域网。
+      - "127.0.0.1:18000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+    init: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      - upil_network
+
+networks:
+  # 外部网络由 D:\uPil\infra\docker-compose.yml 创建并维护。
+  upil_network:
+    external: true
+    name: upil_network

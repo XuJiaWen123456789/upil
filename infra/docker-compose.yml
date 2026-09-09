@@ -1,0 +1,55 @@
+name: upil
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: upil-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-upil}
+      POSTGRES_USER: ${POSTGRES_USER:-upil}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-upil}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - upil
+
+  minio:
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    container_name: upil-minio
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    command: server /data --console-address ":9001"
+    ports:
+      # 9000 与 9001 位于当前 Windows 的系统保留端口范围，使用 19000 提供本机 API。
+      - "19000:9000"
+      # Windows 主机的 9001 位于系统保留端口范围，使用 19001 作为本机控制台端口。
+      - "19001:9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - upil
+
+volumes:
+  postgres_data:
+    name: upil_postgres_data
+  minio_data:
+    name: upil_minio_data
+
+networks:
+  upil:
+    name: upil_network

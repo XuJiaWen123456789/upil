@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="uPil 星河素质教育中心智能客服演示页" />
+    <title>uPil · 星河素质教育中心智能客服</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <main class="page-shell">
+      <header class="hero">
+        <div>
+          <p class="eyebrow">uPil · staging demo</p>
+          <h1>星河素质教育中心智能客服</h1>
+          <p class="subtitle">SSE 流式响应 · 多智能体路由 · RAGFlow 知识问答</p>
+        </div>
+        <div class="status-pill" id="connection-status">就绪</div>
+      </header>
+
+      <section class="toolbar card" aria-label="会话设置">
+        <label class="conversation-field" for="conversation-id">
+          <span>会话 ID</span>
+          <input id="conversation-id" type="text" autocomplete="off" />
+        </label>
+        <button id="new-conversation" class="button secondary" type="button">新建会话</button>
+        <label class="debug-toggle">
+          <input id="debug-mode" type="checkbox" />
+          <span>答辩调试模式</span>
+        </label>
+        <!-- 仅用于 staging 答辩联调；正式环境不应让前端直接提交身份字段。 -->
+        <label id="demo-learner-field" class="conversation-field debug-learner-field" for="demo-learner-id" hidden>
+          <span>演示学员编号（仅调试）</span>
+          <input id="demo-learner-id" type="text" value="L1001" autocomplete="off" />
+        </label>
+      </section>
+
+      <section class="quick-questions card" aria-label="快捷问题">
+        <span class="section-label">快捷问题</span>
+        <button class="quick-button" type="button" data-question="编程课需要家长提前购买电脑吗？">编程课设备</button>
+        <button class="quick-button" type="button" data-question="孩子生病请假后可以补课吗？">请假补课</button>
+        <button class="quick-button" type="button" data-question="孩子 8 岁，想了解少儿编程基础班。">多轮课程</button>
+        <button class="quick-button" type="button" data-question="我的孩子还剩多少课时？">动态课时</button>
+      </section>
+
+      <section class="chat-layout">
+        <div class="chat-panel card">
+          <div id="messages" class="messages" aria-live="polite">
+            <div class="welcome-message">
+              <strong>您好，我是星河素质教育中心公开咨询客服。</strong>
+              <p>您可以咨询课程选择、适龄建议、试听报名和普通校区服务。</p>
+            </div>
+          </div>
+          <form id="chat-form" class="composer">
+            <label class="sr-only" for="question">请输入咨询问题</label>
+            <textarea id="question" rows="3" maxlength="2000" placeholder="例如：8 岁零基础可以学编程吗？" required></textarea>
+            <div class="composer-footer">
+              <span class="hint">按 Ctrl + Enter 发送 · 当前为本地 staging 演示</span>
+              <button id="send-button" class="button primary" type="submit">发送问题</button>
+            </div>
+          </form>
+        </div>
+
+        <aside class="observability card" aria-label="请求观测信息">
+          <div class="panel-heading">
+            <h2>请求观测</h2>
+            <span id="mode-label">普通模式</span>
+          </div>
+          <dl class="metrics">
+            <div><dt>Route</dt><dd id="metric-route">—</dd></div>
+            <div><dt>Provider</dt><dd id="metric-provider">—</dd></div>
+            <div><dt>识别来源</dt><dd id="metric-recognition">—</dd></div>
+            <div><dt>耗时</dt><dd id="metric-duration">—</dd></div>
+          </dl>
+          <div class="debug-only" id="debug-panel" hidden>
+            <h3>SSE 事件时间线</h3>
+            <ol id="event-timeline" class="event-timeline"></ol>
+            <h3>真实引用来源</h3>
+            <pre id="source-output" class="source-output">本次尚未返回引用。</pre>
+          </div>
+          <p class="privacy-note">普通模式不会向客服端展示内部文档名、切片标识或原始业务数据。</p>
+        </aside>
+      </section>
+    </main>
+    <script src="/app.js" defer></script>
+  </body>
+</html>

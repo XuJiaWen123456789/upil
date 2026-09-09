@@ -1,0 +1,28 @@
+# 本地环境和凭据不得进入镜像构建上下文。
+.env
+.env.*
+!.env.staging.example
+
+# Python 本地环境、缓存和测试产物不参与生产镜像构建。
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.git/
+.gitignore
+
+# 测试、文档和演示数据不属于 API 运行时镜像。
+tests/
+docs/
+knowledge_base/
+data/
+backups/
+infra/ragflow/
+
+# 避免把编辑器、系统临时文件带入构建上下文。
+.idea/
+.vscode/
+*.log
+Thumbs.db

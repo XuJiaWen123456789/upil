@@ -1,0 +1,188 @@
+{
+  "package_version": "stage-12-f-1e-2026-09-04",
+  "institution": "星河素质教育中心（虚构演示机构）",
+  "chunk_baseline": {
+    "method": "General",
+    "chunk_size": 256,
+    "overlap": 0,
+    "embedding": "Ollama bge-m3"
+  },
+  "entries": [
+    {
+      "source_path": "01_public_consultation/课程介绍与适龄建议.md",
+      "import_path": "01_public_consultation/课程介绍与适龄建议.md",
+      "dataset": "uPil-课程与公开咨询知识库",
+      "document_type": "course_catalog",
+      "version": "demo-2026-09-01",
+      "access_scope": "public_consultation",
+      "contains_dynamic_data": false,
+      "risk_level": "low",
+      "import_status": "validated"
+    },
+    {
+      "source_path": "01_public_consultation/课程价值与能力培养.md",
+      "import_path": "01_public_consultation/课程价值与能力培养.md",
+      "dataset": "uPil-课程与公开咨询知识库",
+      "document_type": "course_value",
+      "version": "demo-2026-09-01",
+      "access_scope": "public_consultation",
+      "contains_dynamic_data": false,
+      "risk_level": "low",
+      "import_status": "validated"
+    },
+    {
+      "source_path": "01_public_consultation/教师与校区环境.md",
+      "import_path": "01_public_consultation/教师与校区环境.md",
+      "dataset": "uPil-课程与公开咨询知识库",
+      "document_type": "teacher_and_campus",
+      "version": "demo-2026-09-01",
+      "access_scope": "public_consultation",
+      "contains_dynamic_data": false,
+      "risk_level": "medium",
+      "import_status": "validated"
+    },
+    {
+      "source_path": "01_public_consultation/校区与服务信息.md",
+      "import_path": "01_public_consultation/校区与服务信息.md",
+      "dataset": "uPil-课程与公开咨询知识库",
+      "document_type": "campus_service",
+      "version": "demo-2026-09-01",
+      "access_scope": "public_consultation",
+      "contains_dynamic_data": false,
+      "risk_level": "low",
+      "import_status": "validated"
+    },
+    {
+      "source_path": "01_public_consultation/学员阶段成果与展示.md",
+      "import_path": "01_public_consultation/学员阶段成果与展示.md",
+      "dataset": "uPil-课程与公开咨询知识库",
+      "document_type": "learning_outcomes",
+      "version": "demo-2026-09-01",
+      "access_scope": "public_consultation",
+      "contains_dynamic_data": false,
+      "risk_level": "low",
+      "import_status": "pending"
+    },
+    {
+      "source_path": "01_public_consultation/课程装备准备要求.md",
+      "import_path": "01_public_consultation/课程装备准备要求.md",
+      "dataset": "uPil-课程与公开咨询知识库",
+      "document_type": "equipment_requirements",
+      "version": "demo-2026-09-01",
+      "access_scope": "public_consultation",
+      "contains_dynamic_data": false,
+      "risk_level": "low",
+      "import_status": "validated"
+    },
+    {
+      "source_path": "01_public_consultation/公开咨询FAQ.md",
+      "import_path": "01_public_consultation/公开咨询FAQ.md",
+      "dataset": "uPil-课程与公开咨询知识库",
+      "document_type": "public_faq",
+      "version": "demo-2026-09-01",
+      "access_scope": "public_consultation",
+      "contains_dynamic_data": false,
+      "risk_level": "medium",
+      "import_status": "validated"
+    },
+    {
+      "source_path": "01_public_consultation/活动公开信息.md",
+      "import_path": "01_public_consultation/活动公开信息.md",
+      "dataset": "uPil-课程与公开咨询知识库",
+      "document_type": "public_activity",
+      "version": "demo-2026-09-01",
+      "access_scope": "public_consultation",
+      "contains_dynamic_data": false,
+      "risk_level": "medium",
+      "import_status": "pending"
+    },
+    {
+      "source_path": "02_service_rules/报名收费与退费规则.md",
+      "import_path": "02_service_rules/报名收费与退费规则.md",
+      "dataset": "uPil-服务规则与异常处置知识库",
+      "document_type": "enrollment_fee_refund_rules",
+      "version": "demo-2026-09-01",
+      "access_scope": "service_rules",
+      "contains_dynamic_data": false,
+      "risk_level": "high",
+      "import_status": "validated"
+    },
+    {
+      "source_path": "02_service_rules/请假补课调课规则.md",
+      "import_path": "02_service_rules/请假补课调课规则.md",
+      "dataset": "uPil-服务规则与异常处置知识库",
+      "document_type": "leave_makeup_schedule_rules",
+      "version": "demo-2026-09-01",
+      "access_scope": "service_rules",
+      "contains_dynamic_data": false,
+      "risk_level": "high",
+      "import_status": "superseded"
+    },
+    {
+      "source_path": "02_service_rules/安全与健康管理.md",
+      "import_path": "02_service_rules/安全与健康管理.md",
+      "dataset": "uPil-服务规则与异常处置知识库",
+      "document_type": "safety_health_rules",
+      "version": "demo-2026-09-01",
+      "access_scope": "service_rules",
+      "contains_dynamic_data": false,
+      "risk_level": "high",
+      "import_status": "validated"
+    },
+    {
+      "source_path": "02_service_rules/特殊情况处理规则.md",
+      "import_path": "02_service_rules/特殊情况处理规则.md",
+      "dataset": "uPil-服务规则与异常处置知识库",
+      "document_type": "exception_handling_rules",
+      "version": "demo-2026-09-01",
+      "access_scope": "service_rules",
+      "contains_dynamic_data": false,
+      "risk_level": "high",
+      "import_status": "validated"
+    },
+    {
+      "source_path": "02_service_rules/服务办理FAQ.md",
+      "import_path": "02_service_rules/服务办理FAQ.md",
+      "dataset": "uPil-服务规则与异常处置知识库",
+      "document_type": "service_faq",
+      "version": "demo-2026-09-01",
+      "access_scope": "service_rules",
+      "contains_dynamic_data": false,
+      "risk_level": "high",
+      "import_status": "superseded"
+    },
+    {
+      "source_path": "02_service_rules/客服升级与回答规范.md",
+      "import_path": "02_service_rules/客服升级与回答规范.md",
+      "dataset": "uPil-服务规则与异常处置知识库",
+      "document_type": "customer_service_policy",
+      "version": "demo-2026-09-01",
+      "access_scope": "service_rules",
+      "contains_dynamic_data": false,
+      "risk_level": "high",
+      "import_status": "validated"
+    },
+    {
+      "source_path": "02_service_rules/请假补课调课规则_检索优化版.md",
+      "import_path": "02_service_rules/请假补课调课规则_检索优化版.md",
+      "dataset": "uPil-服务规则与异常处置知识库",
+      "document_type": "leave_makeup_schedule_rules",
+      "version": "demo-2026-09-04",
+      "access_scope": "service_rules",
+      "contains_dynamic_data": false,
+      "risk_level": "high",
+      "import_status": "validated"
+    },
+    {
+      "source_path": "02_service_rules/服务办理FAQ_检索优化版.md",
+      "import_path": "02_service_rules/服务办理FAQ_检索优化版.md",
+      "dataset": "uPil-服务规则与异常处置知识库",
+      "document_type": "service_faq",
+      "version": "demo-2026-09-04",
+      "access_scope": "service_rules",
+      "contains_dynamic_data": false,
+      "risk_level": "high",
+      "import_status": "validated"
+    }
+  ]
+}

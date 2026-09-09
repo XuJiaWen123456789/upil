@@ -1,0 +1,47 @@
+[project]
+name = "upil-api"
+version = "0.1.0"
+description = "uPil intelligent customer service and learning-hours assistant"
+requires-python = ">=3.11,<3.15"
+dependencies = [
+	"fastapi>=0.115,<1.0",
+	"httpx>=0.27,<1.0",
+	"langchain>=1.0,<2.0",
+	"langgraph>=1.0,<2.0",
+	"python-multipart>=0.0.20,<1.0",
+	"psycopg[binary]>=3.2,<4.0",
+	"pydantic-settings>=2.0,<3.0",
+	"sqlalchemy>=2.0,<3.0",
+	"uvicorn[standard]>=0.30,<1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+	"pytest>=8.0,<9.0",
+]
+llm = [
+	# 项目主体已使用 LangChain 1.x；同步使用 1.x 的 OpenAI-compatible 适配器，
+	# 避免旧版适配器与 langchain-core 的结构化输出接口不一致。
+	"langchain-openai>=1.0,<2.0",
+]
+media = [
+	"minio>=7.2,<8.0",
+]
+
+# 项目根目录还包含知识库、基础设施和演示数据。显式限定 Python 包发现范围，
+# 防止 setuptools 把这些资源目录误识别为顶层包而导致 editable install 失败。
+[tool.setuptools.packages.find]
+include = ["backend*"]
+exclude = ["data*", "infra*", "backups*", "knowledge_base*", "tests*"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+# 将 pytest 的运行缓存集中到统一目录，避免每次回归测试后在项目根目录
+# 产生 `.pytest-*` 临时文件夹。`runtime` 会由 pytest 在每轮运行时重建，
+# `cache` 则保存 lastfailed 等可安全再生的测试缓存。
+cache_dir = ".test-artifacts/pytest/cache"
+addopts = "--basetemp=.test-artifacts/pytest/runtime"
+
+[tool.ruff]
+line-length = 100

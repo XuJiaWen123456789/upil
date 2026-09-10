@@ -44,8 +44,17 @@ def _planned_class_state(session, message: str, *, actor_role: str, actor_user_i
         "active_entity": plan.active_entity,
         "rewritten_query": plan.rewritten_query,
         "recognition_source": plan.recognition_source.value,
-        "actor_role": actor_role,
-        "actor_user_id": actor_user_id,
+        # 图只接收 HTTP 认证边界生成的权限上下文。校区范围同样属于服务端
+        # 授权结果，不能从自然语言或客户端参数中推断。
+        "access_context": AccessContext(
+            user_id=actor_user_id,
+            role=actor_role,
+            campus_ids=frozenset(
+                {"C02"} if actor_user_id in {"T1002", "A2001"} else {"C01"}
+            )
+            if actor_role in {"teacher", "admin"}
+            else frozenset(),
+        ),
         "class_id": plan.class_id,
         "class_name": plan.class_name,
         "period_start": plan.period_start,

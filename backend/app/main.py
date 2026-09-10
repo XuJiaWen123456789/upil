@@ -57,6 +57,7 @@ from backend.app.services.access_control import (
     can_access_media,
     can_manage_media,
 )
+from backend.app.services.authentication import resolve_access_context
 from backend.app.services.audit import write_audit_log
 from backend.app.services.learning import get_learning_snapshot
 from backend.app.services.faq import stream_faq_answer
@@ -127,22 +128,6 @@ async def attach_request_id(request: Request, call_next):
     #4. 返回响应头
     response.headers["X-Request-ID"] = request_id
     return response
-
-#模拟身份解析
-def resolve_demo_actor(actor_role: ActorRole, actor_user_id: str | None) -> AccessContext:
-    """解析开发阶段的模拟身份；生产环境应由认证中间件替换。
-
-    角色参数是为了本地联调方便，并不构成真实登录。生产环境不能信任
-    URL/请求体中的 actor_role 或 actor_user_id，而应由 JWT/OIDC/网关认证
-    后注入身份、租户和校区权限；否则任何人都可能把自己伪装成管理员。
-    """
-    #模拟当前用户身份。
-    demo_actor_ids = {"parent": "P1001", "teacher": "T1001", "admin": "A1001"}
-    resolved_actor_id = actor_user_id or demo_actor_ids.get(actor_role)
-    if resolved_actor_id is None:
-        raise HTTPException(status_code=401, detail="当前用户身份无效")
-    return AccessContext(user_id=resolved_actor_id, role=actor_role)
-
 
 #媒体响应转换
 def media_response(asset: MediaAsset) -> MediaAssetResponse:
@@ -224,6 +209,7 @@ def sse_event(event: str, data: dict) -> str:
 
 async def stream_answer(
     request: ChatRequest,
+    access_context: AccessContext,
     session: Session,
     store: InMemoryConversationStore,
     intent_model=None,
@@ -308,8 +294,9 @@ async def stream_answer(
             # 只有显式开启且依赖层成功构造客户端时，图内才尝试 A2A 增强。
             "a2a_learning_enabled": settings.a2a_learning_enabled,
             "a2a_learning_client": a2a_learning_client,
-            "actor_role": request.actor_role,
-            "actor_user_id": request.actor_user_id,
+            # 身份已在 HTTP 边界完成认证。图节点只接收不可变权限上下文，
+            # 不再根据请求体中的角色或用户编号自行构造身份。
+            "access_context": access_context,
             "learner_id": request.learner_id,
             # 班级统计参数已由会话规划层解析为稳定的班级 ID 和日期对象。
             # 这里传递结构化值而不是把用户原文交给统计节点，避免自然语言
@@ -384,19 +371,25 @@ async def dependency_health() -> DependencyHealthResponse:
 @app.get("/api/v1/learners/{learner_id}/learning-snapshot", response_model=LearningSnapshotResponse)
 async def learning_snapshot(
     learner_id: str,
+    http_request: Request,
     actor_role: str = "parent",
     actor_user_id: str | None = None,
     session: Session = Depends(get_session),
 ) -> LearningSnapshotResponse:
     """返回结构化学情快照，供开发联调和未来智能体工具调用。
 
-    当前接口是开发期联调入口，响应只返回契约化摘要，不返回底层 ORM 对象。
-    真正对外时应替换为登录态身份和家长—学员绑定关系校验，并增加审计、
-    速率限制以及更细的字段最小化策略。
+    响应只返回契约化摘要，不返回底层 ORM 对象。身份先由统一认证服务转换为
+    AccessContext，再校验家长与学员绑定关系；正式对外时仍需由认证代理完成
+    登录，并增加速率限制、查询审计和更细的字段最小化策略。
     """
 
-    # 该接口的身份参数仅用于本地演示；生产环境必须改为认证中间件注入。
-    context = resolve_demo_actor(actor_role, actor_user_id)
+    context = resolve_access_context(
+        http_request,
+        session,
+        settings,
+        requested_role=actor_role,
+        requested_user_id=actor_user_id,
+    )
 
     snapshot = get_learning_snapshot(
         session,
@@ -415,14 +408,15 @@ async def learning_snapshot(
 )
 async def class_learning_summary(
     class_id: str,
+    http_request: Request,
     query: ClassLearningSummaryQuery = Depends(),
     session: Session = Depends(get_session),
 ) -> ClassLearningSummaryResponse:
     """返回授权班级的确定性学情统计。
 
     该接口面向教师和管理员的内部联调场景，统计指标由后端工具固定计算，
-    不经过 LLM，也不允许客户端传入任意 SQL、工具名或计算公式。当前身份
-    参数只是开发期模拟入口；生产环境必须由认证中间件注入身份和校区权限。
+    不经过 LLM，也不允许客户端传入任意 SQL、工具名或计算公式。身份参数
+    仅在 Demo 模式生效；可信 Header 模式只使用代理身份和数据库校区权限。
     """
 
     # 路径参数只允许作为班级查询键使用，不能改变统计范围或绕过权限判断。
@@ -431,8 +425,13 @@ async def class_learning_summary(
     if not class_id or len(class_id) > 64:
         raise HTTPException(status_code=422, detail="班级编号格式无效")
 
-    # 开发期用显式参数模拟认证结果；正式环境不能信任客户端提交的角色。
-    context = resolve_demo_actor(query.actor_role, query.actor_user_id)
+    context = resolve_access_context(
+        http_request,
+        session,
+        settings,
+        requested_role=query.actor_role,
+        requested_user_id=query.actor_user_id,
+    )
     try:
         summary = query_class_learning_summary(
             session,
@@ -457,6 +456,7 @@ async def class_learning_summary(
 
 @app.post("/api/v1/media/images", response_model=MediaAssetResponse, status_code=201)
 async def upload_media_image(
+    http_request: Request,
     file: UploadFile = File(...),
     title: str = Form(..., min_length=1, max_length=200),
     alt_text: str = Form(..., min_length=1, max_length=500),
@@ -474,7 +474,13 @@ async def upload_media_image(
     文本与审核状态，避免未经审核的素材直接进入公开知识库或对外展示。
     """
 
-    context = resolve_demo_actor(actor_role, actor_user_id)
+    context = resolve_access_context(
+        http_request,
+        session,
+        settings,
+        requested_role=actor_role,
+        requested_user_id=actor_user_id,
+    )
     if not can_manage_media(context):
         raise HTTPException(status_code=403, detail="当前账号无权上传机构媒体")
 
@@ -530,13 +536,20 @@ async def upload_media_image(
 async def review_media_asset(
     asset_id: str,
     request: MediaReviewRequest,
+    http_request: Request,
     actor_role: ActorRole = "admin",
     actor_user_id: str | None = None,
     session: Session = Depends(get_session),
 ) -> MediaAssetResponse:
     """由管理员审核媒体；审核结果决定普通用户是否能获取预签名地址。"""
 
-    context = resolve_demo_actor(actor_role, actor_user_id)
+    context = resolve_access_context(
+        http_request,
+        session,
+        settings,
+        requested_role=actor_role,
+        requested_user_id=actor_user_id,
+    )
     if context.role != "admin":
         raise HTTPException(status_code=403, detail="只有管理员可以审核媒体")
     asset = session.get(MediaAsset, asset_id)
@@ -559,6 +572,7 @@ async def review_media_asset(
 @app.get("/api/v1/media/{asset_id}/url", response_model=MediaAssetUrlResponse)
 async def get_media_url(
     asset_id: str,
+    http_request: Request,
     actor_role: ActorRole = "parent",
     actor_user_id: str | None = None,
     session: Session = Depends(get_session),
@@ -566,7 +580,13 @@ async def get_media_url(
 ) -> MediaAssetUrlResponse:
     """在权限和审核校验通过后生成短时 MinIO 预签名 URL。"""
 
-    context = resolve_demo_actor(actor_role, actor_user_id)
+    context = resolve_access_context(
+        http_request,
+        session,
+        settings,
+        requested_role=actor_role,
+        requested_user_id=actor_user_id,
+    )
     asset = session.get(MediaAsset, asset_id)
     # 统一返回 404，避免通过状态码区分“资产不存在”和“无权访问”。
     if asset is None or not can_access_media(context, asset):
@@ -594,10 +614,18 @@ async def chat_stream(
 ) -> StreamingResponse:
     """创建一个以 SSE 格式返回的对话响应。"""
 
+    context = resolve_access_context(
+        http_request,
+        session,
+        settings,
+        requested_role=request.actor_role,
+        requested_user_id=request.actor_user_id,
+    )
     # 禁止浏览器和反向代理缓存或合并事件，确保模型片段能及时到达前端。
     return StreamingResponse(
         stream_answer(
             request,
+            context,
             session,
             store,
             intent_model,

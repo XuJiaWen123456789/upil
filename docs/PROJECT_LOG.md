@@ -2202,3 +2202,29 @@
   - 远程传输共写入 219 个 Git 对象，GitHub 已成功接收并解析；
   - 发布过程未要求在聊天中传递账号、密码或访问令牌。
 - 阶段结论：Git 初始化、安全排除、首次提交和 GitHub 发布均已完成。后续开发应采用小步提交、测试后推送，并在 CI 中复用敏感信息扫描和全量测试。
+
+## 阶段 14-B：生产认证与统一授权（完成）
+
+- 时间：2026-09-10（Asia/Shanghai）
+- 阶段目标：消除客户端伪造角色和用户编号的权限提升风险，在保留本地联调能力的同时，建立认证代理后的统一生产身份边界。
+- 完成内容：
+  - 新增 `services/authentication.py`，集中把不可信 HTTP 输入转换为不可变 `AccessContext`；
+  - 支持 `demo` 与 `trusted_headers` 双模式，可信模式完全忽略请求体、Query 和 Form 中的模拟身份；
+  - 代理共享密钥使用常量时间比较，认证 Header 增加字符和长度校验；
+  - 回查用户数据库，校验账号启用状态和角色一致性，校区范围只从数据库产生；
+  - 教师和管理员缺少校区范围时失败关闭，避免把空值误解释为全局权限；
+  - 学员快照、班级统计、媒体上传/审核/访问及 SSE 聊天统一接入认证服务；
+  - LangGraph 状态改为接收可信 `AccessContext`，图节点不再从客户端字段构造身份；
+  - `APP_ENV=production` 强制使用 `trusted_headers`，并要求至少 32 字符的代理共享密钥；
+  - 新增脱敏生产配置模板，并忽略真实 `.env.production`；README、技术方案和面试问答已同步。
+- 关键配置：`AUTH_MODE`、`AUTH_TRUSTED_PROXY_SECRET`、`AUTH_USER_HEADER`、`AUTH_ROLE_HEADER`、`AUTH_PROXY_SECRET_HEADER`。
+- 风险与解决方案：
+  - 客户端可伪造管理员身份：可信模式忽略客户端身份，只使用代理 Header 和数据库记录；
+  - 外部伪造 Header：要求代理清理同名 Header、内网隔离 API，并校验共享密钥；
+  - 身份库故障：返回脱敏 503，不降级到 Demo；
+  - 空校区形成无限范围：可信职员缺少校区时拒绝认证；跨校区权限后续使用显式权限表；
+  - 密钥泄露：日志不记录密钥，真实配置不进 Git，生产由 Secret Manager 注入并轮换。
+- 验证方法：Python `compileall`、认证单元测试、生产配置静态/运行时测试、API 越权回归和全量 pytest。
+- 测试结果：Python `compileall` 通过；认证及受影响链路定向测试 `83 passed`；全量回归 `245 passed, 1 skipped, 2 warnings`。跳过项为显式开启才访问真实外部模型的测试；两条警告来自既有 FastAPI `on_event` 弃用提示，不影响本阶段认证行为。
+- 生产边界：尚未实现真实 OIDC/JWT、登录页、认证代理、MFA 和用户生命周期同步；当前不能声称已接入真实机构身份系统或完成生产上线。
+- 下一阶段建议：阶段 14-C 继续完善运行可靠性，优先迁移 FastAPI lifespan、增加统一请求限流和认证审计指标，再设计 Redis/PostgreSQL 会话与任务状态存储。

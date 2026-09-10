@@ -44,6 +44,9 @@ infra/ragflow/.env
 infra/ragflow/.env.upstream-reference
 infra/ragflow/ragflow-logs/
 infra/staging/.env.staging
+# 生产环境真实配置只能由部署平台或 Secret Manager 注入；仓库仅保留
+# `.env.production.example` 字段模板。
+infra/production/.env.production
 .idea/
 .vscode/
 node_modules/

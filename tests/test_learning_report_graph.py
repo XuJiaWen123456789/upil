@@ -3,6 +3,7 @@
 from backend.app.graph import answer_learning_report
 from backend.app.integrations.a2a_client import LocalMockA2AClient
 from backend.app.models import ReportTask
+from backend.app.services.access_control import AccessContext
 from backend.app.services.report_tasks import list_report_artifacts
 from tests.test_database import make_session, seed_session
 
@@ -13,8 +14,8 @@ def report_state(session, **updates):
     state = {
         "route": "learning_report",
         "message": "生成 2026-08-01 至 2026-08-31 的学情报告",
-        "actor_role": "parent",
-        "actor_user_id": "P1001",
+        # 认证在图外完成，报告节点只能消费可信权限上下文。
+        "access_context": AccessContext(user_id="P1001", role="parent"),
         "learner_id": "L1001",
         "request_id": "req_report_graph_001",
         "session": session,

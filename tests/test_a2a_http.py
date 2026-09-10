@@ -15,6 +15,7 @@ from backend.app.integrations.a2a_client import (
     build_learning_task,
 )
 from backend.app.integrations.a2a_http_client import HttpA2ALearningClient
+from backend.app.services.access_control import AccessContext
 from tests.test_a2a_learning_agent import make_snapshot
 from tests.test_a2a_learning_agent import make_report_snapshot
 
@@ -349,8 +350,7 @@ def test_langgraph_uses_http_provider_for_completed_result() -> None:
     seed_session(session)
     result = answer_learning_summary(
         {
-            "actor_role": "parent",
-            "actor_user_id": "P1001",
+            "access_context": AccessContext(user_id="P1001", role="parent"),
             "learner_id": "L1001",
             "request_id": "req_graph_http_001",
             "session": session,
@@ -377,8 +377,7 @@ def test_langgraph_falls_back_to_database_when_http_service_fails() -> None:
     seed_session(session)
     result = answer_learning_summary(
         {
-            "actor_role": "parent",
-            "actor_user_id": "P1001",
+            "access_context": AccessContext(user_id="P1001", role="parent"),
             "learner_id": "L1001",
             "request_id": "req_graph_http_002",
             "session": session,

@@ -56,7 +56,21 @@ def test_staging_template_does_not_contain_real_credentials() -> None:
     assert "RAGFLOW_API_KEY=" in template
     assert "LLM_API_KEY=" in template
     assert "A2A_LEARNING_SERVICE_TOKEN=" in template
-    assert "ragflow-1ByJ9Jo" not in template
+    # 只检查供应商密钥的通用前缀，测试代码不能保存任何历史真实密钥片段。
+    assert "ragflow-1" not in template.lower()
+
+
+def test_staging_template_declares_explicit_authentication_mode() -> None:
+    """本地 staging 可保留 Demo，但必须显式列出切换可信网关所需变量。"""
+
+    template = read_staging_file(".env.staging.example")
+    assert "AUTH_MODE=demo" in template
+    assert "AUTH_TRUSTED_PROXY_SECRET=" in template
+    assert "AUTH_USER_HEADER=X-Authenticated-User-ID" in template
+    assert "AUTH_ROLE_HEADER=X-Authenticated-Role" in template
+    assert "AUTH_PROXY_SECRET_HEADER=X-Auth-Proxy-Secret" in template
+    # 示例文件不允许内置一个看似可直接用于部署的共享密钥。
+    assert "AUTH_TRUSTED_PROXY_SECRET=change-me" not in template
 
 
 def test_dockerignore_excludes_local_secrets_and_runtime_data() -> None:

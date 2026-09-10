@@ -51,6 +51,24 @@ app.dependency_overrides[get_conversation_store] = InMemoryConversationStore
 client = TestClient(app)
 
 
+TRUSTED_PROXY_HEADERS = {
+    "X-Auth-Proxy-Secret": "test-only-trusted-proxy-secret",
+    "X-Authenticated-User-ID": "P1001",
+    "X-Authenticated-Role": "parent",
+}
+
+
+def enable_trusted_header_auth(monkeypatch: pytest.MonkeyPatch) -> None:
+    """让单个 API 测试切换到可信代理认证，测试结束后由 monkeypatch 恢复。"""
+
+    monkeypatch.setattr(main_module.settings, "auth_mode", "trusted_headers")
+    monkeypatch.setattr(
+        main_module.settings,
+        "auth_trusted_proxy_secret",
+        TRUSTED_PROXY_HEADERS["X-Auth-Proxy-Secret"],
+    )
+
+
 def parse_sse_events(body: str) -> list[tuple[str, dict]]:
     """将 SSE 文本解析为便于断言的事件列表。"""
 
@@ -709,3 +727,129 @@ def test_parent_cannot_upload_media() -> None:
         },
     )
     assert response.status_code == 403
+
+
+def test_trusted_auth_ignores_forged_admin_in_chat_body(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SSE 请求体即使伪造管理员，也必须按代理认证出的家长权限执行。"""
+
+    enable_trusted_header_auth(monkeypatch)
+    response = client.post(
+        "/api/v1/chat/stream",
+        headers=TRUSTED_PROXY_HEADERS,
+        json={
+            "message": "查询课时和出勤",
+            "learner_id": "L2001",
+            "actor_role": "admin",
+            "actor_user_id": "A1001",
+        },
+    )
+
+    assert response.status_code == 200
+    events = parse_sse_response(response)
+    answer = "".join(data["content"] for event, data in events if event == "token")
+    assert "无权访问" in answer
+
+
+def test_trusted_parent_cannot_escalate_to_read_class_or_other_learner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """查询参数中的管理员身份不能绕过家长绑定和班级统计权限。"""
+
+    enable_trusted_header_auth(monkeypatch)
+    learner_response = client.get(
+        "/api/v1/learners/L2001/learning-snapshot",
+        headers=TRUSTED_PROXY_HEADERS,
+        params={"actor_role": "admin", "actor_user_id": "A1001"},
+    )
+    class_response = client.get(
+        "/api/v1/classes/CLASS_DANCE_01/learning-summary",
+        headers=TRUSTED_PROXY_HEADERS,
+        params={
+            "period_start": "2026-08-01",
+            "period_end": "2026-08-31",
+            "actor_role": "admin",
+            "actor_user_id": "A1001",
+        },
+    )
+
+    # 学员不存在和越权、班级不存在和越权分别使用统一 404，防止资源枚举。
+    assert learner_response.status_code == 404
+    assert learner_response.json()["detail"] == "未找到可访问的学情数据"
+    assert class_response.status_code == 404
+    assert class_response.json()["detail"] == "未找到可访问的班级学情数据"
+
+
+def test_trusted_teacher_is_limited_to_database_campus_and_classes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """教师可读取本校授课班级，但不能用客户端校区 Header 跨校区访问。"""
+
+    enable_trusted_header_auth(monkeypatch)
+    teacher_headers = {
+        **TRUSTED_PROXY_HEADERS,
+        "X-Authenticated-User-ID": "T1001",
+        "X-Authenticated-Role": "teacher",
+        # 认证服务不读取该客户端可控 Header，最终范围仍来自 users.campus_id。
+        "X-Authenticated-Campus-IDs": "C01,C02",
+    }
+    query = {"period_start": "2026-08-01", "period_end": "2026-08-31"}
+
+    own_class = client.get(
+        "/api/v1/classes/CLASS_DANCE_01/learning-summary",
+        headers=teacher_headers,
+        params=query,
+    )
+    cross_campus_class = client.get(
+        "/api/v1/classes/CLASS_DANCE_02/learning-summary",
+        headers=teacher_headers,
+        params=query,
+    )
+
+    assert own_class.status_code == 200
+    assert cross_campus_class.status_code == 404
+
+
+def test_trusted_parent_cannot_forge_admin_for_media_upload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """媒体表单中的 actor_role=admin 不能覆盖可信代理注入的家长身份。"""
+
+    enable_trusted_header_auth(monkeypatch)
+    response = client.post(
+        "/api/v1/media/images",
+        headers=TRUSTED_PROXY_HEADERS,
+        files={"file": ("teacher.png", PNG_BYTES, "image/png")},
+        data={
+            "title": "越权素材",
+            "alt_text": "不应上传",
+            "source_document": "unknown.md",
+            "visibility": "public_faq",
+            "actor_role": "admin",
+            "actor_user_id": "A1001",
+        },
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "当前账号无权上传机构媒体"
+
+
+def test_trusted_chat_rejects_request_without_proxy_authentication(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """可信模式下，SSE 在建立流之前拒绝缺少代理认证的请求。"""
+
+    enable_trusted_header_auth(monkeypatch)
+    response = client.post(
+        "/api/v1/chat/stream",
+        json={
+            "message": "查询课时和出勤",
+            "learner_id": "L1001",
+            "actor_role": "parent",
+            "actor_user_id": "P1001",
+        },
+    )
+
+    assert response.status_code == 401
+    assert response.json()["detail"] == "认证失败"

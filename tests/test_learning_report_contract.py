@@ -13,6 +13,7 @@ from backend.app.a2a.contracts import (
 )
 from backend.app.a2a.dsh_harness import DshExecutionGate
 from backend.app.graph import answer_learning_report, build_conversation_graph
+from backend.app.services.access_control import AccessContext
 
 
 def make_report_input() -> LearningReportInput:
@@ -129,9 +130,8 @@ def test_graph_registers_report_route_without_fake_result() -> None:
         {
             "route": "learning_report",
             "message": "生成上个月学情报告",
-            # 显式模拟已登录家长，避免匿名请求绕过生产身份门禁。
-            "actor_role": "parent",
-            "actor_user_id": "P1001",
+            # 显式注入认证边界产生的家长权限上下文。
+            "access_context": AccessContext(user_id="P1001", role="parent"),
         }
     )
     assert result["provider"] == "workflow"
@@ -147,8 +147,7 @@ def test_report_missing_session_has_no_sensitive_output() -> None:
             "route": "learning_report",
             "message": "生成上个月学情报告",
             # 这里只验证数据库会话缺失，身份条件必须先满足。
-            "actor_role": "parent",
-            "actor_user_id": "P1001",
+            "access_context": AccessContext(user_id="P1001", role="parent"),
             "learner_id": "L1001",
         }
     )

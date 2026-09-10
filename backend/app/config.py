@@ -7,7 +7,7 @@
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -20,6 +20,15 @@ class Settings(BaseSettings):
     app_host: str = "127.0.0.1"
     app_port: int = 8000
     log_level: str = "INFO"
+
+    # 身份认证分为本地演示和可信网关两种模式。demo 仅用于开发联调；
+    # trusted_headers 要求反向代理在完成登录后注入用户、角色和共享密钥。
+    # 业务代码永远不能根据 app_env 自动降级认证，模式必须由部署配置显式选择。
+    auth_mode: Literal["demo", "trusted_headers"] = "demo"
+    auth_trusted_proxy_secret: str = ""
+    auth_user_header: str = "X-Authenticated-User-ID"
+    auth_role_header: str = "X-Authenticated-Role"
+    auth_proxy_secret_header: str = "X-Auth-Proxy-Secret"
 
     # 依赖健康检查默认只按请求触发，不在开发环境启动时阻塞 API。
     # 预发布环境可以显式开启启动检查，但检查失败不能让主服务无限等待。
@@ -84,6 +93,23 @@ class Settings(BaseSettings):
     # 生产环境应替换为 Redis 或 PostgreSQL Checkpointer。
     conversation_ttl_seconds: int = 1800
     conversation_max_entries: int = 10000
+
+    @model_validator(mode="after")
+    def validate_production_authentication(self) -> "Settings":
+        """阻止生产环境因漏配变量而继承不可信的开发身份模式。
+
+        示例模板中的密钥故意留空，因此不能被直接当作可运行的生产配置。
+        部署平台必须在进程启动前注入随机密钥；校验失败时应用直接拒绝
+        启动，比收到业务请求后再暴露认证配置故障更容易被发布系统发现。
+        """
+
+        if self.app_env.strip().lower() != "production":
+            return self
+        if self.auth_mode != "trusted_headers":
+            raise ValueError("生产环境必须使用 trusted_headers 认证模式")
+        if len(self.auth_trusted_proxy_secret.strip()) < 32:
+            raise ValueError("生产环境代理共享密钥至少需要 32 个字符")
+        return self
 
     model_config = SettingsConfigDict(
         env_file=".env",

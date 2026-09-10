@@ -1,6 +1,6 @@
 # uPil
 
-uPil 是面向素质教育机构的智能客服与课时学情助手。本仓库当前已完成阶段 13-H 的基础容器化联调，包含可运行的后端骨架、LangGraph 路由、结构化学情工具、数据库查询链路、MinIO 媒体接口、RAGFlow 适配器，以及独立本地 HTTP A2A 学情分析子服务。
+uPil 是面向素质教育机构的智能客服与课时学情助手。本仓库当前已完成阶段 14-B 的统一认证与授权边界，包含可运行的后端骨架、LangGraph 路由、结构化学情工具、数据库查询链路、MinIO 媒体接口、RAGFlow 适配器，以及独立本地 HTTP A2A 学情分析子服务。
 
 ## 当前阶段
 
@@ -10,6 +10,8 @@ uPil 是面向素质教育机构的智能客服与课时学情助手。本仓库
 - FAQ、学情摘要、人工转接三个演示节点
 - SQLite/PostgreSQL 可切换的 SQLAlchemy 数据层
 - 家长、教师和管理员的基础学员访问控制
+- HTTP 入口支持 `demo` 与 `trusted_headers` 两种认证模式；业务接口和 LangGraph
+  统一消费服务端生成的 `AccessContext`，可信模式忽略客户端提交的模拟身份
 - 学情摘要从数据库统计课时、消课和出勤
 - 学情分析白名单工具：学员资料、出勤统计、课时账户和阶段进度
 - 结构化学情快照接口，可供后续 A2A Task 封装
@@ -35,7 +37,8 @@ uPil 是面向素质教育机构的智能客服与课时学情助手。本仓库
 当前开发机已通过本地 `.env` 配置 DeepSeek，仅用于显式真实评估和本地
 在线链路；密钥未写入源码或 `.env.example`。RAGFlow Dataset 已完成解析与
 元数据验证，FAQ 在线调用取决于有效的 RAGFlow Chat ID。当前客服演示页已经实现，
-但仍属于本地 staging 展示层，不能替代正式的认证和运营后台。
+但仍属于本地 staging 展示层；仓库尚未提供面向最终用户的登录页面、OIDC
+身份提供方、认证代理和完整运营后台。
 PostgreSQL 连接配置已经准备好，本地测试默认使用注入的 SQLite 内存数据库。
 
 ## 项目过程文档
@@ -85,7 +88,7 @@ $env:MINIO_SECRET_KEY = "minioadmin"
 $env:MINIO_BUCKET = "upil-media"
 $env:MINIO_SECURE = "false"
 
-RAGFlow 保存文档正文、表格、OCR 文本和图片说明；MinIO 保存图片和文档原文件，PostgreSQL 保存媒体元数据及对象键。uPil 在权限校验通过后生成短时预签名 URL。SSE 只返回 media_asset_id 等脱敏引用，不返回二进制内容。真实环境还必须补充图片下载接口的登录态、可见范围校验和 SVG 消毒。
+RAGFlow 保存文档正文、表格、OCR 文本和图片说明；MinIO 保存图片和文档原文件，PostgreSQL 保存媒体元数据及对象键。uPil 在认证和权限校验通过后生成短时预签名 URL。SSE 只返回 media_asset_id 等脱敏引用，不返回二进制内容。真实环境还必须补充恶意文件扫描、专业 SVG 消毒、内容审核和对象生命周期治理。
 
 媒体接口：
 
@@ -93,9 +96,34 @@ RAGFlow 保存文档正文、表格、OCR 文本和图片说明；MinIO 保存�
 - POST /api/v1/media/{asset_id}/review：管理员将素材标记为 approved 或 rejected。
 - GET /api/v1/media/{asset_id}/url：审核通过且当前角色有权限时生成 600 秒预签名 URL。
 
-上传接口会校验文件大小、Content-Type、PNG/JPEG/WebP 文件签名和基础 SVG 安全规则。对象元数据中的中文会进行 UTF-8 百分号编码，业务数据库仍保存完整中文字段。当前开发接口中的 actor_role 和 actor_user_id 仍是模拟身份参数，不能直接用于生产鉴权。
+上传接口会校验文件大小、Content-Type、PNG/JPEG/WebP 文件签名和基础 SVG 安全规则。对象元数据中的中文会进行 UTF-8 百分号编码，业务数据库仍保存完整中文字段。
 
-接口中的 actor_role 和 actor_user_id 仅用于开发和测试身份模拟。正式环境必须从登录态、JWT 或网关注入身份，不能信任客户端直接提交的角色和用户编号。
+## 认证与授权
+
+`AUTH_MODE=demo` 只用于本地开发和自动化测试。在该模式下，请求中的
+`actor_role` 和 `actor_user_id` 保留为模拟身份参数，以兼容本地客服页面和既有测试。
+该模式不得用于公网或正式环境。
+
+`AUTH_MODE=trusted_headers` 用于部署在认证代理之后的 API。代理完成登录后注入
+`X-Authenticated-User-ID`、`X-Authenticated-Role` 和内部共享密钥；uPil 先以
+常量时间比较校验代理密钥，再回查用户数据库，并仅从数据库读取角色与校区范围。
+在此模式下，请求体、查询参数和表单中的模拟身份会被完全忽略。
+
+认证解决“当前用户是谁”，`backend/app/services/access_control.py` 继续解决“该用户
+可以访问哪些学员、班级和媒体”。认证成功不等于拥有业务资源权限，LangGraph 也不
+自行解析凭据，只接收 HTTP 边界生成的 `AccessContext`。
+
+可信 Header 不是直接面向互联网的登录方案。正式部署必须满足以下条件：
+
+- 由 OIDC/OAuth2/SSO 网关或其他可信认证代理完成用户登录；
+- 代理先删除外部请求中的同名身份 Header，再写入经过认证的身份；
+- uPil API 只允许代理所在网络访问，并全链路启用 TLS，条件允许时使用 mTLS；
+- `AUTH_TRUSTED_PROXY_SECRET` 通过 Secret Manager 或部署平台密钥注入并定期轮换；
+- 生产环境必须显式设置 `AUTH_MODE=trusted_headers`，身份库故障时失败关闭；
+- 后续可用 OIDC/JWT 校验适配器替换可信 Header 适配层，业务授权层无需改写。
+
+生产变量模板位于 `D:/uPil/infra/production/.env.production.example`。模板强制使用
+`trusted_headers`，但故意保留共享密钥及外部服务凭据为空，不能直接作为部署密钥。
 
 ## 本地运行
 
@@ -132,7 +160,8 @@ uvicorn backend.app.main:app --reload --port 8000
 
 http://127.0.0.1:8000/api/v1/learners/L1001/learning-snapshot
 
-该接口的 actor_role 和 actor_user_id 目前只用于本地开发模拟身份；生产环境必须由认证中间件注入，不能信任客户端查询参数。
+在默认 `demo` 模式下可以使用 `actor_role` 和 `actor_user_id` 模拟身份；切换为
+`trusted_headers` 后，这两个查询参数会被忽略，身份由认证代理 Header 和数据库共同确定。
 
 ## SSE 验证
 

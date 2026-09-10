@@ -1,7 +1,7 @@
 """HTTP 请求、智能体结果和响应模型。
 
-Pydantic 模型负责校验接口输入格式；真正的身份认证和授权仍应由服务端
-登录态、JWT 或网关注入，不能把客户端传入的角色字段当作生产鉴权依据。
+Pydantic 模型负责校验接口输入格式；身份认证由 HTTP 边界的认证服务完成，
+业务授权由 AccessContext 和资源权限规则完成。请求中的身份字段仅供 Demo 模式使用。
 """
 
 from datetime import date
@@ -98,9 +98,8 @@ class ChatRequest(BaseModel):
         default=None, min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_-]+$"
     )
 
-    # 当前字段仅用于演示和测试；正式环境应从认证上下文获得角色。
+    # 两个身份字段只在 AUTH_MODE=demo 时生效；trusted_headers 模式会完全忽略它们。
     actor_role: ActorRole = "parent"
-    # 当前字段用于本地验证数据权限；正式版本应由 JWT/登录态注入，不能信任客户端。
     actor_user_id: str | None = Field(default=None, max_length=64)
     learner_id: str | None = Field(default=None, max_length=64)
 
@@ -108,9 +107,9 @@ class ChatRequest(BaseModel):
 class ClassLearningSummaryQuery(BaseModel):
     """班级学情统计接口的查询参数。
 
-    该模型把时间范围、低课时阈值和开发期模拟身份集中在一个输入契约中，
-    避免接口函数里散落未校验的字符串和数字。生产环境应移除身份字段，
-    改为从登录态、JWT 或网关注入已认证的 AccessContext。
+    该模型把时间范围、低课时阈值和 Demo 模拟身份集中在一个输入契约中，
+    避免接口函数里散落未校验的字符串和数字。可信 Header 模式仍可接收这些
+    兼容字段，但认证服务会忽略它们并生成数据库校验后的 AccessContext。
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -118,7 +117,7 @@ class ClassLearningSummaryQuery(BaseModel):
     period_start: date
     period_end: date
     low_balance_threshold: int = Field(default=5, ge=0, le=10000)
-    # 班级统计属于教师/管理员内部能力，演示接口默认使用演示教师身份。
+    # Demo 模式默认使用演示教师；可信模式的身份只能来自认证代理和身份库。
     actor_role: ActorRole = "teacher"
     actor_user_id: str | None = Field(default=None, max_length=64)
 

@@ -73,8 +73,8 @@ class ConversationState(TypedDict, total=False):
     """
 
     message: str
-    actor_role: str
-    actor_user_id: str | None
+    # 权限上下文必须由 HTTP 认证边界或可信内部调用方注入，图内不解析凭据。
+    access_context: AccessContext
     learner_id: str | None
     session: Session
     conversation_id: str | None
@@ -163,7 +163,10 @@ def answer_learning_summary(state: ConversationState) -> dict[str, Any]:
     出勤等可核验事实不会因模型幻觉变成对家长的错误承诺。
     """
 
-    if state.get("actor_role") == "parent" and not state.get("learner_id"):
+    context = state.get("access_context")
+    if context is None:
+        return {"answer": "当前用户身份无效，请重新登录后再查询。", "provider": "workflow"}
+    if context.role == "parent" and not state.get("learner_id"):
         return {"answer": "为了保护学员信息，请先提供已绑定的学员编号。", "provider": "database"}
 
     session = state.get("session")
@@ -171,20 +174,13 @@ def answer_learning_summary(state: ConversationState) -> dict[str, Any]:
     if session is None or learner_id is None:
         return {"answer": "当前缺少学情查询所需的会话信息，请转人工客服处理。", "provider": "database"}
 
-    # 开发阶段用固定演示账号补足身份；生产环境必须改为认证中间件注入。
-    demo_actor_ids = {"parent": "P1001", "teacher": "T1001", "admin": "A1001"}
-    actor_user_id = state.get("actor_user_id") or demo_actor_ids.get(state.get("actor_role", ""))
-    if actor_user_id is None:
-        return {"answer": "当前用户身份无效，请重新登录后再查询。", "provider": "database"}
-
-    context = AccessContext(user_id=actor_user_id, role=state.get("actor_role", ""))
     try:
         tool_result = execute_learning_snapshot_via_registry(
             session=session,
             context=context,
             learner_id=learner_id,
             request_id=state.get("request_id"),
-            actor_role=state.get("actor_role", "system"),
+            actor_role=context.role,
         )
     except SQLAlchemyError:
         # 不向用户暴露数据库连接、表名或 SQL 细节，避免扩大信息泄露面。
@@ -284,7 +280,13 @@ def answer_class_learning_summary(state: ConversationState) -> dict[str, Any]:
     只能在本节点得到可信结果后，对脱敏聚合结果调用 A2A/DSH 排版。
     """
 
-    role = state.get("actor_role", "")
+    context = state.get("access_context")
+    if context is None:
+        return {
+            "answer": "当前用户身份无效，请重新登录后再查询。",
+            "provider": "workflow",
+        }
+    role = context.role
     if role not in {"teacher", "admin"}:
         # 家长只允许查询本人绑定学员，不能通过修改 class_id 读取全班数据。
         return {
@@ -303,12 +305,6 @@ def answer_class_learning_summary(state: ConversationState) -> dict[str, Any]:
             "answer": "请补充具体班级和统计周期，例如“统计舞蹈一班2026年8月的出勤率”。",
             "provider": "workflow",
         }
-
-    # 开发阶段允许通过固定演示身份补足未传 user_id 的情况；生产环境必须
-    # 由 JWT/OIDC/网关认证上下文注入，不能相信请求体中的 actor_user_id。
-    demo_actor_ids = {"teacher": "T1001", "admin": "A1001"}
-    actor_user_id = state.get("actor_user_id") or demo_actor_ids[role]
-    context = AccessContext(user_id=actor_user_id, role=role)
 
     try:
         summary = query_class_learning_summary(
@@ -388,7 +384,8 @@ def answer_learning_report(state: ConversationState) -> dict[str, Any]:
     HTTP 请求当作任务生命周期；这样便于幂等、重试、查询进度和审计。
     """
 
-    if state.get("actor_role") != "parent":
+    context = state.get("access_context")
+    if context is None or context.role != "parent":
         return {
             "answer": "当前学情报告入口仅支持已登录家长查询本人绑定的学员。",
             "provider": "workflow",
@@ -406,9 +403,7 @@ def answer_learning_report(state: ConversationState) -> dict[str, Any]:
             "provider": "database",
         }
 
-    # 开发环境允许使用固定演示家长；生产环境必须由认证中间件注入用户 ID。
-    requester_id = state.get("actor_user_id") or "P1001"
-    context = AccessContext(user_id=requester_id, role="parent")
+    requester_id = context.user_id
     try:
         snapshot = build_learning_report_snapshot(
             session,

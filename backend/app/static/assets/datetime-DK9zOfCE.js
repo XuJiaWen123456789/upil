@@ -1,0 +1,1 @@
+const n=/(?:Z|[+-]\d{2}:?\d{2})$/i;function i(e){const t=e.trim();return t?new Date(n.test(t)?t:`${t}Z`):new Date(Number.NaN)}function a(e,t){if(!e)return"";const r=i(e);return Number.isNaN(r.getTime())?"":t?new Intl.DateTimeFormat("zh-CN",t).format(r):r.toLocaleString("zh-CN")}export{a as f};

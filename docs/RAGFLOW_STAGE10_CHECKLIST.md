@@ -10,7 +10,7 @@
 
 ## A. 配置聊天模型与 Embedding 模型
 
-1. 打开 http://localhost:19080，使用已经恢复的 RAGFlow 管理员账号登录。
+1. 打开 http://localhost:29080，使用已经恢复的 RAGFlow 管理员账号登录。
 2. 点击右上角头像，进入 Model providers（模型提供商）。
 3. 配置聊天模型（当前下一步）：
    - 优先选择控制台中可用的 DeepSeek 官方提供商。
@@ -22,7 +22,7 @@
    - Provider：Ollama。
    - Model name：bge-m3。
    - Model type：Embedding。
-   - Base URL：http://host.docker.internal:11434。
+   - Base URL：http://host.docker.internal:11528。
    - 向量维度：1024。
    - RAGFlow 控制台连接测试：成功。
 5. 在 System Model Settings（系统模型设置）中设置默认 Chat model 和默认 Embedding model。
@@ -114,15 +114,17 @@ Dataset：尚未创建
 - 模型名称：bge-m3:latest。
 - 模型能力：embedding。
 - 向量维度：1024。
-- 本机接口：POST http://localhost:11434/api/embed，返回 HTTP 200。
-- OpenAI 兼容接口：POST http://localhost:11434/v1/embeddings，返回 HTTP 200。
-- Docker 容器访问宿主机 Ollama：GET http://host.docker.internal:11434/api/tags，验证成功。
+- 本机接口：POST http://localhost:11528/api/embed，返回 HTTP 200。
+- OpenAI 兼容接口：POST http://localhost:11528/v1/embeddings，返回 HTTP 200。
+- Docker 容器访问宿主机 Ollama：GET http://host.docker.internal:11528/api/tags，验证成功。
 
 RAGFlow 控制台配置参数：
 
 - Provider：Ollama。
 - Model name：bge-m3。
 - Model type：Embedding。
-- Base URL：http://host.docker.internal:11434。
+- Base URL：http://host.docker.internal:11528。
 
-说明：命令行和 Docker 网络验证已经完成；还需要在 RAGFlow 控制台中添加该模型并点击连接测试，成功后再创建 Dataset。
+说明：Windows 当前将 Ollama 默认端口 11434 所在区间标记为系统保留端口，
+因此统一改用 11528。命令行、Docker 网络、RAGFlow 查询 Embedding 和现有 Dataset
+检索均已验证成功；后续不要再将模型 Base URL 改回 11434。

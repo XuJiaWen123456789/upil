@@ -6,7 +6,7 @@
 
 from datetime import date
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from backend.app.models import (
@@ -20,6 +20,7 @@ from backend.app.models import (
     Lesson,
     ParentLearner,
     User,
+    UserPermission,
 )
 
 
@@ -75,13 +76,18 @@ def seed_demo_data(session: Session) -> int:
     )
     add_if_missing(
         User,
-        "A1001",
-        {"id": "A1001", "display_name": "演示管理员", "role": "admin", "campus_id": "C01"},
+        "T1004",
+        {"id": "T1004", "display_name": "演示课程顾问", "role": "teacher", "campus_id": "C01"},
     )
     add_if_missing(
         User,
-        "A2001",
-        {"id": "A2001", "display_name": "分校区演示管理员", "role": "admin", "campus_id": "C02"},
+        "T1006",
+        {
+            "id": "T1006",
+            "display_name": "销售顾问老师二",
+            "role": "teacher",
+            "campus_id": "C01",
+        },
     )
     # 一个家长可以绑定多个孩子；该关系由 ParentLearner 单独表达，不把家长直接挂到班级。
     parent_names = {
@@ -103,6 +109,35 @@ def seed_demo_data(session: Session) -> int:
             {"id": parent_id, "display_name": display_name, "role": "parent"},
         )
     # 先刷新用户，确保教师外键和家长绑定关系使用的用户记录已经存在。
+    session.flush()
+
+    # 销售顾问老师仍属于 teacher 业务角色，只通过最小权限进入线索工作区。
+    # 项目不设置运营账号或转化漏斗权限，避免扩展为后台运营系统。
+    add_if_missing(
+        UserPermission,
+        ("T1004", "lead_followup"),
+        {"user_id": "T1004", "permission": "lead_followup"},
+    )
+    # 第二位销售顾问用于验证线索领取后的归属隔离。顾问仍复用 teacher
+    # 认证角色，但只授予 lead_followup，不会获得班级统计或学员访问能力。
+    add_if_missing(
+        UserPermission,
+        ("T1006", "lead_followup"),
+        {"user_id": "T1006", "permission": "lead_followup"},
+    )
+    # 早期草案中的媒体工作台与运营端都已取消。重复执行 seed 时同步清理
+    # 已下线权限，防止旧开发库继续向会话注入不存在的前端能力。
+    session.execute(
+        delete(UserPermission).where(
+            (UserPermission.user_id == "T1005")
+            | UserPermission.permission.in_(
+                ("media_upload", "media_review", "lead_analytics")
+            )
+        )
+    )
+    legacy_operator = session.get(User, "T1005")
+    if legacy_operator is not None:
+        legacy_operator.is_active = False
     session.flush()
 
     add_if_missing(Learner, "L1001", {"id": "L1001", "display_name": "演示学员"})
@@ -274,7 +309,7 @@ def seed_demo_data(session: Session) -> int:
     session.flush()
 
     # 每行对应 LESSON_01 至 LESSON_06；None 表示本次课尚未登记考勤。
-    # 这些状态只用于本地 staging 和答辩演示，不代表真实学员数据。
+    # 这些状态只用于本地联调，不代表真实学员数据。
     attendance_plan = {
         "L1001": ["present", "absent", "present", "absent", "present", "present"],
         "L1002": ["present", "present", "absent", "present", "absent", "present"],

@@ -2,7 +2,7 @@
 
 本模块采用可选依赖策略：只有同时开启配置、提供模型参数并安装
 langchain-openai 时才创建 ChatOpenAI。未配置时返回 None，由业务服务
-使用可解释的离线回退，便于开发、测试和答辩演示。
+使用可解释的离线回退，保证外部模型不可用时仍能返回安全、可预期的业务结果。
 """
 
 from collections.abc import AsyncIterator
@@ -24,11 +24,18 @@ def _message_content(message: Any) -> str:
     return str(content).strip()
 
 
-def build_langchain_llm(settings: Settings | None = None):
+def build_langchain_llm(
+    settings: Settings | None = None,
+    *,
+    model_name: str | None = None,
+    temperature: float | None = None,
+    timeout_seconds: float | None = None,
+):
     """按配置创建 LangChain ChatOpenAI 实例，无法创建时返回 None。"""
 
     current = settings or get_settings()
-    if not current.llm_enabled or not current.llm_api_key or not current.llm_model:
+    selected_model = (model_name or current.llm_model).strip()
+    if not current.llm_enabled or not current.llm_api_key or not selected_model:
         return None
 
     try:
@@ -39,11 +46,13 @@ def build_langchain_llm(settings: Settings | None = None):
 
     kwargs: dict[str, Any] = {
         "api_key": current.llm_api_key,
-        "model": current.llm_model,
-        "temperature": current.llm_temperature,
+        "model": selected_model,
+        "temperature": (
+            current.llm_temperature if temperature is None else temperature
+        ),
         # 超时后由业务层走确定性回退；只允许少量 SDK 重试，避免 429 时
         # 在入口请求中长时间等待。
-        "timeout": current.llm_timeout_seconds,
+        "timeout": timeout_seconds or current.llm_timeout_seconds,
         "max_retries": current.llm_max_retries,
     }
     if current.llm_base_url:

@@ -1,0 +1,220 @@
+/* 阶段 15-C：家长聊天线索卡和销售顾问老师工作区。 */
+.lead-chat-card {
+  width: min(520px, 88%);
+  margin-top: 8px;
+  padding: 14px 16px;
+  border-left: 4px solid #d99d3f;
+  border-radius: 4px;
+  background: #fff8e9;
+  color: #193331;
+}
+
+.lead-chat-head,
+.lead-detail-head,
+.lead-list-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.lead-chat-card p {
+  margin: 8px 0;
+  font-size: 14px;
+}
+
+.lead-chat-card small,
+.lead-detail-head p {
+  color: #607771;
+}
+
+.lead-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid #d8e4dc;
+}
+
+.lead-tabs button {
+  padding: 10px 18px;
+  border: 0;
+  border-bottom: 3px solid transparent;
+  background: transparent;
+  color: #607771;
+  cursor: pointer;
+}
+
+.lead-tabs button.active {
+  border-bottom-color: #1f7569;
+  color: #143d3b;
+  font-weight: 700;
+}
+
+.lead-workspace {
+  display: grid;
+  grid-template-columns: minmax(250px, 340px) minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.lead-list-panel {
+  overflow: hidden;
+}
+
+.lead-list-item {
+  display: block;
+  width: 100%;
+  padding: 15px 16px;
+  border: 0;
+  border-bottom: 1px solid #e2ebe5;
+  background: #fff;
+  color: #193331;
+  text-align: left;
+  cursor: pointer;
+}
+
+.lead-list-item:last-child {
+  border-bottom: 0;
+}
+
+.lead-list-item:hover,
+.lead-list-item.active {
+  background: #edf5ee;
+}
+
+.lead-list-item span:not(.lead-list-title),
+.lead-list-item small {
+  display: block;
+  margin-top: 5px;
+  color: #607771;
+  font-size: 12px;
+}
+
+.strength-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #8ca099;
+}
+
+.strength-dot.medium {
+  background: #d99d3f;
+}
+
+.strength-dot.high {
+  background: #b95345;
+}
+
+.lead-detail {
+  min-height: 530px;
+}
+
+.lead-detail-head {
+  align-items: flex-start;
+}
+
+.lead-detail-head h2 {
+  margin: 5px 0;
+}
+
+.lead-detail-head p {
+  margin: 0;
+}
+
+.lead-facts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1px;
+  margin: 20px 0;
+  border: 1px solid #dce7df;
+  background: #dce7df;
+}
+
+.lead-facts div {
+  padding: 13px;
+  background: #f8faf8;
+}
+
+.lead-facts span,
+.lead-facts strong {
+  display: block;
+}
+
+.lead-facts span {
+  color: #718780;
+  font-size: 11px;
+}
+
+.lead-facts strong {
+  margin-top: 4px;
+  overflow-wrap: anywhere;
+  font-size: 13px;
+}
+
+.lead-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.revealed-contact {
+  padding: 8px 10px;
+  border-left: 3px solid #1f7569;
+  background: #edf5ee;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.follow-up-form {
+  margin-top: 24px;
+  padding-top: 20px;
+  border-top: 1px solid #dce7df;
+}
+
+.follow-up-form h3,
+.follow-up-history h3 {
+  margin: 0 0 12px;
+}
+
+.follow-up-form textarea {
+  min-height: 78px;
+  resize: vertical;
+}
+
+.follow-up-history {
+  margin-top: 24px;
+}
+
+.follow-up-history article {
+  padding: 12px 0;
+  border-top: 1px solid #e2ebe5;
+}
+
+.follow-up-history article span {
+  display: block;
+  color: #718780;
+  font-size: 11px;
+}
+
+.follow-up-history article p {
+  margin: 6px 0 0;
+  color: #4d6660;
+  font-size: 13px;
+}
+
+@media (max-width: 900px) {
+  .lead-workspace {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 680px) {
+  .lead-facts {
+    grid-template-columns: 1fr;
+  }
+
+  .lead-chat-card {
+    width: 100%;
+  }
+}

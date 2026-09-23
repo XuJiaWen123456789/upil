@@ -10,6 +10,7 @@ __pycache__/
 # Codex 本地修改备份与人工数据库备份可能包含历史配置或业务快照，
 # 仅用于当前开发机恢复，不进入公开源码仓库。
 .codex-backups/
+.codex_tmp/
 backups/
 
 # 以下目录是为了联调而拉取的外部开源项目完整副本。主项目只保留
@@ -28,6 +29,11 @@ data/pytest-tmp/
 .coverage
 htmlcov/
 
+# 报告样例、PDF 渲染页和其他人工验收输出都可由测试或构建脚本重新生成，
+# 不作为源码提交，避免二进制产物和本机临时文件持续污染工作区状态。
+output/
+tmp/
+
 # Python 可编辑安装生成的包元数据。
 *.egg-info/
 
@@ -35,6 +41,8 @@ htmlcov/
 *.bak
 data/docker-config/
 data/media-pending.json
+data/last_pdf_task_id.txt
+data/runtime-checks/
 
 # RAGFlow 与预发布环境的真实配置、运行日志只保留在部署机器上；
 # 对应的 .env.example 模板仍会提交。

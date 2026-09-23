@@ -1,0 +1,85 @@
+/* 报告中心的补充样式独立维护，避免改写历史压缩样式文件。 */
+.notice {
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: #eaf3ed;
+  color: #20544c;
+  font-size: 13px;
+}
+
+.period-field {
+  min-width: min(340px, 100%);
+}
+
+.report-list {
+  margin-top: 18px;
+  overflow: hidden;
+}
+
+.report-list > .report-card:not(:last-child) {
+  border-bottom: 1px solid #e3ece6;
+}
+
+.report-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: none;
+}
+
+.pagination {
+  justify-content: space-between;
+  margin-top: 14px;
+}
+
+.next-button {
+  margin-left: 8px;
+}
+
+.section-gap {
+  margin-top: 18px;
+}
+
+.compact-heading {
+  align-items: center;
+  margin-bottom: 12px;
+  padding: 18px 20px 0;
+}
+
+.compact-heading h2 {
+  margin: 3px 0 0;
+  font-size: 20px;
+}
+
+.compact-empty {
+  padding: 44px 20px;
+}
+
+.compact-value {
+  font-size: 18px;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 680px) {
+  .period-field {
+    min-width: 100%;
+  }
+
+  .report-actions {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .pagination {
+    align-items: center;
+  }
+
+  .compact-heading {
+    display: flex;
+    align-items: center;
+  }
+
+  .compact-heading h2 {
+    font-size: 18px;
+  }
+}

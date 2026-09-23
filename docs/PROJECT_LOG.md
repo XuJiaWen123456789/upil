@@ -2228,3 +2228,1596 @@
 - 测试结果：Python `compileall` 通过；认证及受影响链路定向测试 `83 passed`；全量回归 `245 passed, 1 skipped, 2 warnings`。跳过项为显式开启才访问真实外部模型的测试；两条警告来自既有 FastAPI `on_event` 弃用提示，不影响本阶段认证行为。
 - 生产边界：尚未实现真实 OIDC/JWT、登录页、认证代理、MFA 和用户生命周期同步；当前不能声称已接入真实机构身份系统或完成生产上线。
 - 下一阶段建议：阶段 14-C 继续完善运行可靠性，优先迁移 FastAPI lifespan、增加统一请求限流和认证审计指标，再设计 Redis/PostgreSQL 会话与任务状态存储。
+
+## 阶段 14-C：OIDC/JWT 认证与外部身份映射（完成）
+
+- 时间：2026-09-10（Asia/Shanghai）
+- 阶段目标：在可信网关 Header 方案之外实现 Resource Server 侧 OIDC/JWT 认证，使生产 HTTP 入口能够从 Bearer Token 建立可信身份，并继续由本地数据库完成业务授权。
+- 完成内容：
+  - 认证模式扩展为 `demo`、`trusted_headers` 和 `oidc_jwt`，生产环境禁止使用 Demo；
+  - OIDC 模式只接受 Bearer JWT，校验算法白名单、`kid`、签名、`iss`、`aud`、`exp`、`iat` 和主体声明；
+  - JWKS 获取增加超时、禁止跳转、1 MiB 响应限制、100 个 Key 上限、TTL 缓存和未知 `kid` 强制刷新；
+  - 普通缓存时间与强制刷新时间分离：普通拉取后允许立即恢复真实密钥轮换，连续未知 `kid` 在 30 秒冷却期内不重复访问 IdP；
+  - 新增 `external_identities` 模型，以 `(issuer, subject)` 显式映射本地 `user_id`；同一 issuer 下一个本地用户只能绑定一个 subject；
+  - JWT 中的角色和校区声明不参与授权，本地 `users` 表决定角色、启用状态和校区范围；
+  - 映射缺失、映射停用和用户停用统一按 401 处理，身份库/JWKS 故障按脱敏 503 失败关闭；
+  - 六个 FastAPI 业务入口统一异步解析 `AccessContext`，生产请求中的模拟身份字段被忽略；
+  - 新增 PostgreSQL 增量迁移 `infra/production/migrations/001_create_external_identities.sql`；
+  - 新增 `scripts/manage_external_identity.py`，支持显式绑定、重新启用和幂等停用外部身份；
+  - 生产模板默认 `AUTH_MODE=oidc_jwt`，README、技术方案和面试问答同步更新。
+- 关键配置：
+  - `AUTH_OIDC_ISSUER`：受信任 Token 的签发方；
+  - `AUTH_OIDC_AUDIENCE`：uPil API 的受众；
+  - `AUTH_OIDC_JWKS_URI`：身份提供方公钥集合地址；
+  - `AUTH_OIDC_ALGORITHMS`：服务端允许的非对称算法白名单；
+  - `AUTH_OIDC_SUBJECT_CLAIM`：外部主体声明，默认 `sub`；
+  - `AUTH_OIDC_JWKS_CACHE_SECONDS`、`AUTH_OIDC_CLOCK_SKEW_SECONDS` 和 `AUTH_OIDC_HTTP_TIMEOUT_SECONDS`：缓存、时钟偏差和依赖超时边界。
+- 遇到问题与解决方案：
+  - 初版把普通 JWKS 缓存的 `refreshed_at` 同时用作未知 `kid` 强制刷新冷却，可能在首次拉取后 30 秒内错过真实密钥轮换；已新增独立 `_JWKS_FORCED_REFRESH_AT`，并用轮换和连续未知 Key 测试覆盖；
+  - 不能假设 IdP 的 `sub` 等于 `P1001` 等本地业务编号；新增显式身份映射表和受控运维脚本；
+  - 不能信任 Token 中的 `role=admin`；测试证明映射到家长账号后仍只能获得家长权限；
+  - 认证方法引入 JWKS 网络 I/O 后必须异步执行；统一将六个 HTTP 入口改为 `await resolve_access_context(...)`；
+  - 生产数据库不能依赖 `create_all()` 隐式变更；提供可审查的 PostgreSQL 增量 SQL。
+- 验证范围：
+  - 有效 JWT、角色伪造、缺少或错误 Bearer、过期 Token、错误 issuer/audience/签名/kid、拒绝 HS256；
+  - 映射缺失或停用、本地用户停用、职员缺少校区、数据库或 JWKS 故障脱敏；
+  - JWKS 格式/容量约束、密钥轮换即时强刷和未知 `kid` 冷却；
+  - 外部身份唯一约束、绑定/停用运维流程和 FastAPI HTTP 入口集成。
+- 验证结果：
+  - Python `compileall backend scripts tests`：通过；
+  - 认证边界定向测试：`35 passed`；
+  - 全量回归：`282 passed, 1 skipped, 2 warnings`；
+  - 跳过项是只有显式配置后才访问真实外部模型的测试；
+  - 两条警告来自既有 FastAPI `on_event` 弃用提示，不影响本阶段认证行为，后续迁移到 lifespan。
+- 安全边界：
+  - uPil 当前实现的是 Resource Server，不保存 IdP 用户密码，也不签发 Token；
+  - 测试使用运行时临时 RSA 密钥和注入的内存 JWKS，不访问真实身份提供方；
+  - 尚未部署真实 Keycloak、Auth0 或企业 SSO，未实现登录 UI、MFA、SCIM/用户生命周期同步、Token 黑名单或完整 Alembic 迁移体系；
+  - 不能声称已经接入真实机构统一身份系统或完成生产上线。
+- 阶段结论：完成 Resource Server 侧 OIDC/JWT 验证、外部身份映射、统一授权接入及本地自动化验证。下一阶段优先处理 FastAPI lifespan、限流和认证审计指标。
+
+## 阶段 14-D：家长/教师双角色权限模型收缩（完成）
+
+- 时间：2026-09-10（Asia/Shanghai）
+- 阶段目标：取消管理员与校区运营业务角色，只保留家长和教师权限控制，防止 uPil 从智能客服与学情助手继续扩张成综合后台管理系统。
+- 完成内容：
+  - 将 HTTP 请求角色契约统一收敛为 `ActorRole = Literal["parent", "teacher"]`；
+  - 认证服务角色白名单仅保留 `parent`、`teacher`，Demo、Trusted Header 和 OIDC 三种模式最终都必须回查本地用户库；
+  - 家长只能访问 `parent_learners` 中显式绑定的孩子，不能读取班级聚合统计或维护机构媒体；
+  - 教师访问学员必须同时满足授课关系、有效报名关系和校区范围，访问班级统计还要求班级处于启用状态；
+  - 保留 `Campus`、`User.campus_id` 与 `ClassGroup.campus_id` 作为教师跨校区数据隔离字段，不提供校区运营端；
+  - Seed 数据删除演示管理员账号，外部身份绑定脚本拒绝为历史管理员建立 OIDC 映射；
+  - 增量迁移停用历史管理员账号及其外部身份映射，保留历史记录用于审计；
+  - Query、JSON、Form 输入中的 `admin` 与 `campus_operator` 在业务逻辑执行前返回 422；
+  - Trusted Header 声明已取消角色返回 401；JWT 中高权限角色声明不参与本地授权；
+  - 新增阶段 14-D 技术方案和面试问答，明确产品边界、权限矩阵与媒体审核的后续职责分离方案。
+- 关键代码与配置：
+  - `backend/app/schemas.py`：双角色 HTTP 输入契约；
+  - `backend/app/services/authentication.py`：双角色认证白名单和数据库身份收敛；
+  - `backend/app/services/access_control.py`：家长绑定与教师三重数据范围校验；
+  - `infra/production/migrations/002_disable_legacy_admin_users.sql`：停用历史管理员及外部身份映射；
+  - `tests/test_api.py`、`tests/test_authentication.py`：已取消角色的输入和认证回归。
+- 风险点：
+  - 教师素材上传和审核尚未实现人员职责分离；后续应增加 `uploaded_by`、`reviewed_by`、`reviewed_at`，禁止同一教师审核本人素材，或增加教师内部 `media_reviewer` 权限；
+  - 历史阶段日志中可能保留当时的管理员设计描述，作为过程记录不删除；README 和当前技术方案以双角色边界为准；
+  - Demo 模式仍保留客户端身份参数用于本地测试，正式环境必须使用 Trusted Header 或 OIDC/JWT。
+- 验证方法：
+  - 全局检索所有客户端可控 `actor_role`，确认 HTTP 边界均使用 `ActorRole`；
+  - 执行认证、API、班级统计、外部身份与生产配置聚焦测试；
+  - 执行 `python -m compileall backend scripts tests`、全量 `pytest -q` 和 `git diff --check`。
+- 验证结果：
+  - Python `compileall backend scripts tests`：通过；
+  - 双角色认证与授权聚焦回归：`115 passed, 2 warnings`；
+  - 全量回归：`292 passed, 1 skipped, 2 warnings`；
+  - 跳过项为只有显式配置后才访问真实外部模型的测试；
+  - 两条警告来自 FastAPI `on_event` 弃用提示，与本阶段权限行为无关；
+  - `git diff --check`：通过，仅提示工作区部分文件下次由 Git 转换行尾。
+- 阶段结论：uPil 当前只保留家长与教师两个业务角色；校区仅作为教师数据隔离维度，不存在校区运营或管理员业务入口。
+
+## 阶段 14-E：教师媒体上传与审核职责分离（完成）
+
+- 时间：2026-09-10（Asia/Shanghai）
+- 阶段目标：在不增加管理员或校区运营角色的情况下，将教师媒体上传与内容批准拆分为两项独立职责，防止单个教师上传后直接向家长发布素材。
+- 完成内容：
+  - 新增 `user_permissions` 细粒度授权模型，当前只允许 `media_upload` 和 `media_review`；
+  - `MediaAsset` 增加 `uploaded_by`、`reviewed_by`、`reviewed_at` 和 `review_comment` 审核轨迹；
+  - T1001 负责演示上传，T1003 负责独立复核，T1002 不具有媒体能力；
+  - 上传素材固定进入 `pending`，上传人只能从可信认证上下文写入；
+  - 家长和普通教师不能审核，具有复核权限的教师也不能审核本人上传的素材；
+  - PostgreSQL 审核查询使用 `SELECT ... FOR UPDATE`，已审核素材重复提交返回 409；
+  - `approved` 按 visibility 开放，`rejected` 对所有业务角色禁止访问；
+  - 审核日志只记录状态和是否填写意见，完整自由文本不扩散到日志平台；
+  - OIDC/JWT、可信 Header 和请求体中的权限声明全部忽略，权限只从本地数据库白名单加载；
+  - 权限库异常按脱敏 503 失败关闭，不记录数据库 DSN 或异常正文；
+  - 新增 PostgreSQL 迁移 `003_add_media_review_separation.sql`，并同步 README、技术方案和面试问答。
+- 关键文件：
+  - `backend/app/models.py`：权限表和媒体审核轨迹；
+  - `backend/app/services/authentication.py`：权限白名单、数据库加载和失败关闭；
+  - `backend/app/services/access_control.py`：上传、审核和媒体读取规则；
+  - `backend/app/main.py`：上传人写入、行锁审核和审计日志；
+  - `backend/app/services/seed.py`：演示教师职责分配；
+  - `infra/production/migrations/003_add_media_review_separation.sql`：生产增量迁移；
+  - `tests/test_api.py`、`tests/test_authentication.py`、`tests/test_database.py`、`tests/test_production_config.py`：安全与迁移回归。
+- 关键安全设计：
+  - 角色、动作权限、资源归属和状态迁移四层联合判断；
+  - 即使同一教师同时持有上传和审核权限，仍由 `uploaded_by != reviewer_id` 阻止自审；
+  - pending 只向上传者和复核教师开放，rejected 失败关闭；
+  - MinIO 写入成功而数据库失败时执行对象删除补偿，但不宣称跨系统原子事务。
+- 验证方法：
+  - `python -m compileall backend tests`；
+  - 媒体、认证、数据库和生产配置聚焦测试；
+  - 全量 `pytest -q`；
+  - `git diff --check`；
+  - 全局搜索确认不存在旧 `can_manage_media` 调用。
+- 验证结果：
+  - Python `compileall backend scripts tests`：通过；
+  - 媒体、认证、数据库和生产配置聚焦回归：`112 passed, 2 warnings`；
+  - 全量回归：`301 passed, 1 skipped, 2 warnings`；
+  - 跳过项为只有显式配置后才访问真实外部模型的测试；
+  - 两条警告来自既有 FastAPI `on_event` 弃用提示，与媒体职责分离行为无关；
+  - `git diff --check`：通过，仅有既有 Git 行尾转换提示；
+  - `can_manage_media` 全局残留检查：无引用。
+- 遗留风险：
+  - 尚未接入病毒扫描、图片内容安全检测和版权/肖像授权材料管理；
+  - 尚未实现已发布素材撤回、修订和重新审核流程；
+  - MinIO 与 PostgreSQL 尚未使用 outbox、后台补偿重试和定期对账；
+  - 尚未实现审核队列 SLA、积压告警及生产权限申请和定期复核流程。
+- 下一阶段建议：阶段 14-F 实现统一限流、FastAPI lifespan 和可观测性增强，优先覆盖认证失败、RAGFlow、A2A 与媒体上传的分级指标和告警。
+
+## 阶段 15-A-1：家长学情报告查询与 Markdown 下载权限闭环（完成）
+
+- 时间：2026-09-10（Asia/Shanghai）
+- 阶段目标：把 A2A 学情报告从一次性 SSE 文本扩展为家长可持续查询、可授权下载且可审计的主系统业务资源。
+- 完成内容：
+  - 新增 `GET /api/v1/reports`，按认证家长和 `parent_learning_report` 类型在 SQL 层过滤并分页返回任务；
+  - 新增 `GET /api/v1/reports/{task_id}`，返回状态、周期和安全 Artifact 元数据，不返回正文、checksum、scope、metrics、requester_id 或内部错误；
+  - 新增 `GET /api/v1/reports/{task_id}/download`，下载唯一且完整的 Markdown 报告；
+  - 其他家长、错误任务类型和不存在任务统一返回 404，教师访问家长报告能力返回 403；
+  - pending、running、failed 和 cancelled 任务不能下载，返回 409；
+  - completed 报告下载前复核 Artifact 数量、类型、正文、SHA-256、A2A 内容安全契约和内部 `learner_ref`；
+  - 下载响应设置 attachment、private/no-store 和 nosniff，成功后写最小 `report.download` 审计；
+  - SSE 增加主系统 `report_task` 状态事件，`complete` 返回 `report_task_id`，并与远程 A2A Task ID 分离；
+  - 非报告路由不返回空的报告字段，保持既有 SSE 契约；
+  - 新增 21 个报告 HTTP/SSE 回归测试，以及阶段技术方案和面试问答。
+- 关键片段：
+  - 所有权条件：`ReportTask.id == task_id`、`ReportTask.requester_id == context.user_id`、`ReportTask.task_type == parent_learning_report`；
+  - 完整性校验：服务端重新计算 SHA-256，并使用 `hmac.compare_digest()` 比较；
+  - 下载审计：只记录任务和产物类型，不记录报告正文、checksum、scope 或学员内部引用；
+  - SSE：主系统任务使用 `report_task_id`，远程节点继续使用独立 `a2a_task.task_id`。
+- 遇到问题：
+  - 测试共用模块级 FastAPI 应用，直接 `pop()` A2A 依赖覆盖可能受测试执行顺序影响；
+  - `completed` 状态与文件可下载不是同一语义，历史脏数据可能出现状态完成但产物缺失或损坏；
+  - 列表接口若读取 Artifact 正文，会扩大敏感数据进入应用内存和响应序列化的范围。
+- 解决方案：
+  - 测试保存并精确恢复原有依赖覆盖，不整体清空共享应用状态；
+  - 把最终下载门禁放在独立服务函数中，详情只据校验结果展示下载入口；
+  - 列表只查询任务摘要，不联表批量读取正文，最终下载再次执行纵深校验。
+- 风险点：
+  - 当前只提供 Markdown，尚未完成正式 PDF 渲染、中文字体和分页视觉验证；
+  - 报告正文仍位于关系数据库，大文件尚未迁移到私有 MinIO；
+  - A2A 报告生成仍为同步调用，尚未引入消息队列、worker 租约和超时任务回收；
+  - 尚未实现报告保留期、撤回、删除、版本替换和对象存储对账。
+- 验证方法：
+  - `.venv\Scripts\python.exe -m pytest tests/test_report_api.py -q`；
+  - `.venv\Scripts\python.exe -m pytest tests/test_api.py tests/test_report_task_persistence.py -q`；
+  - `.venv\Scripts\python.exe -m pytest -q`；
+  - `.venv\Scripts\python.exe -m compileall backend scripts tests`；
+  - `git diff --check`。
+- 测试结果：
+  - 报告 API/SSE 专项：`21 passed, 2 warnings`；
+  - 原 API 与报告持久化回归：`52 passed, 2 warnings`；
+  - 全量回归：`322 passed, 1 skipped, 2 warnings`；
+  - 跳过项为只有显式开启才访问真实外部模型的测试；
+  - 两条警告来自既有 FastAPI `on_event` 弃用提示，与本阶段报告权限行为无关。
+- 阶段结论：家长报告已具备持久化任务、所有权查询、防枚举、最小响应、完整性复核、安全下载和审计闭环。当前完成的是 Markdown 交付，不表述为已经完成生产 PDF 和大规模异步任务平台。
+- 下一阶段：阶段 15-A-2，实现受控 PDF 生成、中文字体与分页视觉验证、私有 MinIO 存储及短时授权下载。
+
+## 项目维护：长对话上下文迁移（完成）
+
+- 时间：2026-09-10（Asia/Shanghai）
+- 目标：降低长期开发对单一超长聊天记录的依赖，让后续对话可以基于仓库内的明确状态快速续接。
+- 完成内容：
+  - 新增 `docs/PROJECT_HANDOFF.md`，集中记录当前阶段、已完成测试基线、有效架构决策、PDF 安全边界、待办顺序、关键源码入口和验证命令；
+  - 明确当前继续固定模板学情报告，不接入真实 DSH 或 `omdsh-dev/dsh-genui`；
+  - 提供可直接用于新 Codex 对话的启动指令；
+  - 约定每阶段更新续接文档，过程细节继续保存在 `docs/PROJECT_LOG.md`。
+- 遇到问题：当前聊天历史无法由项目代码主动删除，超长历史会增加每轮关联和检查成本。
+- 解决方案：将可信项目状态迁移到版本化的仓库文档；新对话只读取续接文档、Git 状态和当前阶段源码，不再重放全部聊天历史。
+- 验证方法：确认 `D:\uPil\docs\PROJECT_HANDOFF.md` 存在并包含阶段 15-A-2 的完整续接信息。此次只修改文档，未运行代码测试。
+- 关键片段：`请先读取 D:\uPil\docs\PROJECT_HANDOFF.md，检查 git status 和阶段 15-A-2 相关源码，然后继续实现。`
+
+## 阶段 15-A-2：固定模板学情报告 PDF 与 MinIO 私有交付（完成）
+
+- 时间：2026-09-10（Asia/Shanghai）
+- 阶段目标：在已有家长报告所有权闭环上增加固定中文 PDF、私有对象存储和后端鉴权代理下载，同时不引入真实 DSH 或动态代码执行。
+- 完成内容：
+  - 新增 `reportlab` 和 `pypdf` 依赖，以及 PDF 开关、字体、大小、页数、模板版本和独立报告桶配置；
+  - 新增严格 Markdown 白名单解析，固定字段必须与主系统 `LearningReportSnapshot` 逐字一致；
+  - 使用 ReportLab 构造 A4 固定模板，包含课程、出勤课时、已发布进度、建议、隐私说明、页码和版本；
+  - 显式注册中文字体，缺失或不可解析时失败关闭；所有业务文本先转义，不执行 HTML、代码、链接或外链图片；
+  - 使用 pypdf 复核 PDF 魔数、可解析性、加密状态、大小、页数、模板文字和内部引用；
+  - 在文档层启用 invariant，并归一化 trailer `/ID`，保证相同输入跨进程生成稳定字节；
+  - MinIO 适配器新增独立报告桶及上传、读取、删除方法，对象键固定为 `reports/{task_id}/{sha256}.pdf`，不生成预签名 URL；
+  - 保持原 `images/` 读取和删除边界，修复实现过程中发现的 `get_image()` 主体错位回归，并新增测试保护；
+  - `ReportArtifact` 增加对象键、媒体类型、文件名、大小和页数，PDF 二进制不进入关系数据库；
+  - 新增生产迁移 `004_add_report_pdf_storage.sql`，包含元数据列、每任务每类型唯一约束和存储形态检查；
+  - LangGraph 在完成任务前生成并上传 PDF，同一事务保存 Markdown 与 PDF 元数据；数据库失败时补偿删除对象，上传失败时任务进入 failed；
+  - 下载接口优先返回 PDF，历史单 Markdown 继续兼容；对象缺失或存储故障返回固定 503，完整性异常返回固定 409；
+  - 下载继续复用 OIDC/可信 Header/本地角色和家长所有权，其他家长防枚举 404，教师 403，响应禁止缓存并写最小审计；
+  - 同步开发、staging、production 环境模板、README、技术方案、面试问答和项目续接文档。
+- 关键安全设计：
+  - A2A 只组织受控 Markdown，主系统掌握事实数据、PDF 模板和文件交付；
+  - PDF 下载不暴露 `object_key`、桶名、MinIO 地址或永久/预签名 URL；
+  - 新报告必须恰好包含一个 Markdown 和一个 PDF Artifact，历史报告只允许一个 Markdown；
+  - 上传与数据库采用可补偿流程，不把跨系统操作误称为原子事务；
+  - 自动化测试使用虚构数据、内存 SQLite、假 MinIO 和本地 Mock A2A，不访问任何真实外部服务。
+- 遇到问题与解决方案：
+  - ReportLab 动态子集字体使仅在 Canvas 层设置 invariant 时仍产生运行时元数据和变化的 trailer ID；改为文档层显式 `invariant=1`，再以其余内容摘要归一化定长 ID，并增加跨 Python 进程测试；
+  - 报告方法插入位置一度截断原 `get_image()`，通过定点 diff 发现并恢复，同时补充媒体桶回归；
+  - 当前模型不支持查看 PNG 图片输入，无法完成人工主观逐页审阅；改用 Poppler 实际渲染、pypdf 中文提取和 PNG 有效像素安全边界检查，且在技术方案中明确该限制；
+  - 系统没有 `pdftotext` 命令，但 `pdfinfo`、`pdftoppm` 和 pypdf 可用，文本校验由 pypdf 完成。
+- 视觉与文件验收：
+  - 样例：`output/pdf/learning-report-sample.pdf`；
+  - SHA-256：`6f98d5e9fa0b6679d6e78bd77d6ebfb3fac1e1a305a526239f950f7c6a5b33e6`；
+  - 大小 `37707` 字节，A4，1 页，未加密，无 JavaScript；
+  - 中文标题、课程、指标、隐私说明、模板版本和页码均可提取；
+  - 150 DPI 渲染为 `1241x1754` PNG，有效像素边界为 `(106, 50, 1134, 1705)`，未越过页面安全区。
+- 阶段测试：
+  - PDF 与 MinIO 专项：`29 passed`；
+  - 图编排专项：`10 passed`；
+  - 报告 HTTP 专项：`30 passed, 2 warnings`；
+  - 生产配置专项：`25 passed`；
+  - 阶段相关集合：`111 passed, 2 warnings`；
+  - 全量回归：`364 passed, 1 skipped, 2 warnings`；跳过项仍为需要显式开启的真实外部模型测试，两条 warning 均为既有 FastAPI `on_event` 弃用提示；
+  - Python `compileall backend scripts tests`：通过；
+  - `git diff --check`：通过。
+- 生产边界：
+  - 未接真实 DSH、真实 MinIO、OIDC、PostgreSQL、RAGFlow、模型或教育机构数据；
+  - 尚未实现异步 worker、报告保留期、撤回/删除、版本替换、补偿重试和对象对账；
+  - 上线前必须验证真实字体镜像、私有桶策略、TLS、Secret 注入、迁移执行和备份恢复。
+- 阶段结论：固定模板中文 PDF、MinIO 私有对象存储、数据库最小元数据、家长鉴权代理下载、完整性复核、失败补偿和历史 Markdown 兼容已经形成可测试闭环。
+
+## 阶段 15-A-3：报告生命周期与异步可靠性（生产增强，暂缓）
+
+- 时间：2026-09-10（Asia/Shanghai）
+- 决策：根据当前交付目标，暂不实现报告保留期、撤回、删除、版本替换、消息队列、worker 租约、死信、outbox、补偿重试和 MinIO/PostgreSQL 定期对账。
+- 原因：阶段 15-A-2 已满足固定模板 PDF、私有存储和家长鉴权下载的当前闭环；15-A-3 属于面向规模化生产的可靠性增强，不阻塞作品演示和离线验收。
+- 保留边界：未经生产桶策略、TLS、Secret、字体镜像、迁移、备份恢复和容量验证，不把当前实现表述为已完成大规模生产就绪。
+- 下一阶段：跳过 15-A-3，进入阶段 15-B-1“家长报告前端查询与下载体验”，复用现有安全 API，不引入真实 DSH 或真实外部服务。
+
+## 阶段 15-B-1：Vue 前端架构迁移与双角色工作台（完成）
+
+- 时间：2026-09-11（Asia/Shanghai）
+- 阶段目标：在不改变 FastAPI 认证、授权、审计和报告安全交付边界的前提下，将原客服演示页迁移为 Vue 3 + TypeScript + Vite 双角色业务工作台。
+- 框架决策：采用 Vue 3、TypeScript、Vite、Vue Router、Pinia、原生 Fetch 和手动 POST SSE 消费；不选 Chainlit/Streamlit（更适合 Agent 演示或内部看板）、不选 Nuxt（当前不需要 SSR/SEO），也不继续扩大原生 JavaScript 的维护成本。
+- 接口覆盖：bootstrap/session、POST SSE 对话、家长学情、报告列表/详情/鉴权代理下载、教师班级统计、媒体上传/独立审核和短时访问地址。
+- 安全边界：浏览器只访问同源 FastAPI；不接触数据库、MinIO、A2A、RAGFlow、对象键、桶名或密钥；报告下载不使用预签名 URL；前端不保存真实 Bearer Token；前端路由与 capability 只改善体验，后端每个接口继续独立鉴权。
+- 工程实现：新增 frontend 工程、角色/capability/feature 路由守卫、Demo 身份切换、SSE 分块解析、报告安全文件名解析、FastAPI SPA history 回退、staging Node builder + Python runtime 多阶段 Dockerfile；本地 build:backend 使用临时目录和目录级切换，失败不清空旧静态页。
+- 兼容处理：15-A-3“报告生命周期与异步可靠性”继续标记为“生产增强，暂缓”；不接真实 DSH、真实 MinIO、真实 OIDC、真实 PostgreSQL、真实模型或教育机构数据。
+- 验证结果：
+  - frontend `npm run typecheck`：通过；
+  - frontend `npm run test`：7 passed；
+  - frontend `npm run build`：通过；
+  - frontend `npm run build:backend`：通过；
+  - 后端认证、SPA 托管和 staging 专项：96 passed, 2 warnings；
+  - Docker daemon 当前不可用，因此只完成 Dockerfile/.dockerignore 静态安全回归，不宣称镜像构建成功。
+- 文档：新增 `docs/技术方案/阶段15-B-1_Vue前端架构迁移与双角色工作台.md`、`docs/面试问答/阶段15-B-1_Vue前端架构与安全边界.md`，并同步 README 与 PROJECT_HANDOFF。
+- 阶段结论：Vue 业务工作台和 FastAPI 同源静态托管已经形成离线可验证闭环；生产认证、真实外部依赖和 15-A-3 可靠性增强仍未完成。
+- 最终复核：frontend npm run typecheck、npm run test（7 passed）、npm run build、npm run build:backend 均通过；后端全量 pytest 为 368 passed, 1 skipped, 2 warnings；Python compileall 通过；精确敏感配置键扫描未在 frontend 源码和构建产物发现 MINIO_ENDPOINT、DATABASE_URL、OIDC_CLIENT_SECRET、RAGFLOW_API_KEY 或 A2A_LEARNING_SERVICE_TOKEN。
+
+
+
+
+## Vue 前端敏感标识静态扫描说明
+
+前端可见的安全边界说明中允许出现“MinIO”等产品名，用于教育用户浏览器不会直接访问内部存储；但生产敏感配置名、真实密钥、DSN、内部地址和 Token 不得出现在构建产物中。专项测试使用精确敏感键集合扫描源码和构建产物，避免把通用架构说明误判为配置泄露。
+
+## Vue 前端构建与托管验收补充
+
+- `frontend` 使用 `npm ci` 安装锁定依赖，`npm run typecheck`、`npm run test`、`npm run build` 均通过；
+- `npm run build:backend` 先写临时目录，再完成 `backend/app/static` 目录级切换；
+- FastAPI 新增 `SpaStaticFiles`，对非 API、无扩展名 history 路径返回 `index.html`，缺失静态资源保持 404；
+- staging Dockerfile 改为 Node 22 builder + Python 3.11 runtime 多阶段构建，并由测试保护 `npm ci`、非 root、字体和 `.dockerignore` 规则；
+- Docker daemon 当前未启动，因此只完成 Dockerfile/.dockerignore 静态检查，不宣称镜像构建成功；
+- 前端专项测试：SSE、Demo 身份、报告文件名、安全 API 客户端共 7 项通过；
+- 后端认证、SPA 托管和 staging 专项共 96 项通过，保留既有 2 条 FastAPI `on_event` 弃用 warning。
+
+## 阶段 15-B-2：家长与教师学情报告单 PDF 交付闭环（完成）
+
+- 时间：2026-09-11（Asia/Shanghai）
+- 阶段目标：只补充多 Agent 报告链路的两个显式入口，并在复用家长报告基础设施的前提下完成教师班级报告生成、查询、详情和私有 PDF 下载；不接真实 DSH。
+- 入口定位：
+  - 家长报告页增加“生成报告”按钮；
+  - 教师班级页增加“生成班级报告”按钮、历史列表和详情入口；
+  - 两个按钮只是聊天意图之外可发现、可重试的显式触发方式，均调用同一个 `report_execution.py` 多 Agent 执行链，不是另建后台报表系统；
+  - 聊天入口继续支持自然语言意图生成，首次生成仍把 A2A Markdown 返回 SSE。
+- 周期与统计口径：
+  - 页面只提交 `{"period":"最近30天"}`，不增加开始日期、结束日期、阈值、格式或 CSV 控件；
+  - 用户可用“上个月”“本月”“2026年8月”或自然语言日期范围覆盖默认周期，权威日期由后端统一解析；
+  - 教师低课时阈值固定为 5，完成率、出勤率、缺勤 TOP5、低课时、未登记考勤和缺失课时账户均由数据库确定性计算；
+  - 继续使用现有舞蹈、美术、音乐和少儿编程课程数据。
+- 共用执行链：
+  - 家长和教师入口复用 A2A 调用、任务状态机、幂等键、PDF 转换、MinIO 上传、数据库提交和失败补偿；
+  - `pending -> running` 使用条件更新领取执行权，并发请求不会重复调用 A2A；
+  - 相同主体、解析后周期、任务类型和模板版本复用 pending/running/completed 任务，failed/cancelled 创建 `_a2` 等新尝试；
+  - 家长每次查询和下载都重新校验当前绑定关系；教师每次重新校验当前校区与实际授课关系。
+- PDF 方案演进：
+  - 阶段 15-A-2 的 ReportLab v1 是历史实现和历史记录，继续保留兼容语义；
+  - 当前 v2 改为 `markdown-it-py + WeasyPrint + pypdf` 共享转换器，家长和教师只保留各自权威字段契约薄层；
+  - A2A 只产生受控 Markdown，Markdown 仅存在于本次请求内存，不再保存为新 Artifact；
+  - 新任务最终只保存一个 PDF Artifact，PDF 二进制进入 MinIO 独立私有桶，数据库只保存对象键、checksum、大小、页数、媒体类型和文件名；
+  - CSV 和新任务双产物已取消；历史家长单 Markdown 与旧 Markdown+PDF 仍可读取，教师只接受单 PDF；
+  - 下载不暴露桶名、对象键、内部地址或预签名 URL，FastAPI 在动态鉴权后代理返回，并复核 SHA-256、大小、页数、模板标识和敏感值。
+- WeasyPrint 契约调整：
+  - 字体子集对象编号可能使相同输入的 PDF 字节在不同进程间变化，因此不再把跨进程字节完全一致作为业务契约；
+  - 幂等任务键负责避免重复业务生成，数据库记录的已上传文件 SHA-256 继续负责下载完整性；
+  - 重复渲染测试改为核对页数和可提取业务文本一致，并对每份文件独立执行结构、摘要、大小、页数和敏感信息复核。
+- 容器交付修正：
+  - 新增仓库根级 `.dockerignore`，确保以仓库根目录为构建上下文时排除本地环境和无关产物；
+  - staging Dockerfile 默认最终阶段恢复为干净 `runtime`，Compose 两个服务显式使用 `target: final`；
+  - `report-tests` 单独复制测试源码并预建非 root pytest 临时目录，部署镜像不包含 pytest 或 `/app/tests`。
+- 验证结果：
+  - 报告专项：`145 passed, 7 skipped, 3 warnings`；
+  - Windows 全量：`382 passed, 8 skipped, 3 warnings`；
+  - Linux `report-tests` 真实 WeasyPrint/Pango/Cairo/Noto CJK/pypdf 验收：`24 passed`，无跳过；
+  - frontend `npm run typecheck`：通过；
+  - frontend `npm run test`：`9 passed`；
+  - frontend `npm run build` 与 `npm run build:backend`：通过；
+  - Python `compileall backend scripts tests`：通过；
+  - staging 默认镜像构建：通过，运行用户为 `upil`（uid 10001），`pytest=None`，`/app/tests=False`；
+  - `git diff --check`：通过。
+- 跳过和警告说明：
+  - Windows 7 个真实 PDF 用例因本机无法加载 `D:\Tesseract-OCR\libgobject-2.0-0.dll` 跳过，Linux 容器已覆盖同一真实链路，不安装或修改该 DLL；
+  - 全量第 8 个跳过项是默认关闭的真实外部意图模型测试；
+  - 3 条 warning 来自既有 AnyIO/FastAPI 弃用提示，不影响本阶段功能。
+- 生产边界：阶段 15-A-3 继续标记为“生产增强，暂缓”；消息队列、worker 租约、保留期、撤回删除、补偿重试和存储对账不在本阶段范围，且未连接真实 MinIO、PostgreSQL、OIDC、模型或教育机构数据。
+- 阶段结论：家长和教师现在都可以通过自然语言意图或显式按钮进入同一多 Agent 报告链，教师只能操作实际授课班级，家长只能操作当前绑定孩子，新任务以单 PDF 形式完成私有存储和动态鉴权下载闭环。
+
+## 阶段 15-C：对话式试听与报名线索闭环（完成）
+
+- 时间：2026-09-12（Asia/Shanghai）
+- 阶段目标：在不改变正常咨询回答的前提下，让报课意向 Agent 旁路并行识别家长试听/报名意向，高意向缺少联系方式时主动询问，并由销售顾问老师完成领取和跟进。
+- 产品范围：
+  - 继续只保留 `parent` 和 `teacher` 两个业务角色；
+  - 销售顾问老师使用 `teacher + lead_followup`，普通授课教师无权访问线索；
+  - 取消运营端、运营账号、转化漏斗和 `lead_analytics`；
+  - 不接真实 CRM、电话、短信、支付或外部招生系统。
+- 多 Agent 编排：
+  - 联系方式在任何模型、RAGFlow 或 A2A 调用前本地提取并脱敏；
+  - 报课意向 Agent 在 Supervisor 路由前启动，与主业务 Agent 并行；
+  - 旁路只输出课程白名单、意向类型和有限证据码，不回答、不调用工具、不写数据库；
+  - 等待预算从旁路启动时计算，超时、异常或非法结构走确定性回退，不中断主回答；
+  - 不为 fan-out 重构已稳定的 FAQ 和服务规则链。
+- 意向与授权规则：
+  - 低/中意向进入 `lead_pool`；明确试听、报名或顾问联系进入 `advisor_queue`；
+  - 高意向且没有已授权联系方式时，后端固定文案主动询问；
+  - 只有家长主动提供联系方式且同一轮明确授权才加密保存；
+  - “同意 + 联系方式”在没有已有意向时不能凭空创建线索；
+  - 拒绝或撤回优先，关闭当前会话线索并清除联系方式。
+- 隐私与权限：
+  - Fernet 保存密文，HMAC-SHA-256 指纹只用于去重，普通响应只返回脱敏值；
+  - 顾问必须先显式领取，之后才能通过独立 no-store 接口查看明文；
+  - 明文只在浏览器当前页面内存保存，切换或刷新即清除；
+  - 越权详情与不存在统一 404，关键动作写最小审计，不记录原文、密文或明文；
+  - 生产环境启动时强制校验 Fernet 和至少 32 字节指纹密钥。
+- 持久化与接口：
+  - 新增 `EnrollmentLead`、`LeadFollowUp`、活动线索幂等键和 PostgreSQL 部分唯一索引；
+  - 新增 `GET /api/v1/leads`、详情、专用联系方式和 `POST .../follow-ups`；
+  - 迁移 `005_add_enrollment_leads.sql` 建表并清理早期 `T1005/lead_analytics` 残留，不在生产迁移中插入演示顾问。
+- 前端闭环：
+  - 聊天页消费独立 `lead` SSE 事件，展示固定询问、保存确认或撤回确认；
+  - 教师端新增销售顾问队列、线索池、领取、按需查看联系方式、有限跟进动作和历史；
+  - Demo 身份新增 `T1004` 销售顾问老师，导航由 `lead_followup` 控制。
+- 验证结果：
+  - 15-C 四组专项：`33 passed`；
+  - 线索 API 专项：`10 passed`；
+  - API/auth/database/production/staging 相关回归：`134 passed`；
+  - Windows 后端全量：`419 passed, 8 skipped, 3 warnings`；
+  - frontend `npm run typecheck`：通过；
+  - frontend Vitest：`12 passed`；
+  - frontend 普通构建与 `build:backend`：通过；
+  - Python `compileall backend scripts tests`：通过。
+- 跳过和警告说明：Windows 跳过项来自本机 WeasyPrint/Pango 依赖及默认关闭的真实外部模型测试；3 条 warning 为既有 AnyIO/FastAPI 弃用提示。
+- 阶段结论：家长正常咨询、旁路意向识别、高意向主动授权询问、联系方式加密、销售顾问老师领取与跟进已经形成离线可验证闭环。当前没有真实外部招生系统或生产身份/数据联调，不把该结果表述为生产 CRM。
+
+## 项目收尾：Agent 生产代码模块化重构与目录治理（完成）
+
+- 时间：2026-09-12（Asia/Shanghai）
+- 阶段目标：在不改变已完成业务闭环的前提下，消除生产代码单文件上千行，
+  按 Agent、API、Workflow、Service、Tool、Connector 和 Prompt 明确目录职责；
+  测试文件按用户要求暂不拆分。
+- 拆分原则：
+  - 不以 800 行机械切割，先按单一职责、变更原因和依赖方向拆分；
+  - LangGraph State、路由、builder 和节点分离，一个节点一个文件；
+  - Prompt 正文资源化，动态 Pydantic Schema、意图枚举和课程白名单仍由代码注入；
+  - Tool 只执行确定性动作，不处理 LangGraph 路由；
+  - Connector 只负责 A2A 映射、传输、重试和校验，不处理家长/教师业务授权；
+  - 稳定异常、校验、策略和脱敏按语义复用，不用通用装饰器隐藏不同事务和错误语义。
+- LangGraph 与聊天工作流：
+  - 新增 `backend/app/workflows/conversation/contracts.py`、`routing.py`、`builder.py`；
+  - FAQ、服务规则、家长学情、班级学情、报告、人工转接和澄清节点各自独立文件；
+  - 新增 `workflows/chat_stream.py` 承担单轮聊天、SSE 和招生意向旁路编排；
+  - `graph.py` 缩为兼容门面，生产工作流直接导入新路径。
+- FastAPI HTTP 层：
+  - 新增 `application.py` 和 `api` 包；
+  - system、learning、reports、leads、media、chat、demo 路由分离；
+  - presenters 独立转换报告、媒体和线索响应；
+  - 保留 CORS、request ID、非阻断启动探测、Router 顺序和 Vue SPA deep-link 回退；
+  - `main.py` 继续提供 `backend.app.main:app`、FastAPI 依赖对象和既有 monkeypatch 符号。
+- Supervisor Agent：
+  - 新增 `backend/app/agents/supervisor`，拆分 contracts、constants、prompt、parsing、
+    rules、validation 和 service；
+  - `services/intent_recognition.py` 仅保留旧公开符号重导出；
+  - 会话生产服务直接导入新 Agent，不通过兼容门面反向依赖。
+- Prompt、Tool 与 Connector：
+  - 新增安全缓存 Prompt loader 以及 `intent_router.txt`、`enrollment_intent.txt`、
+    `faq_fallback.txt`；
+  - `tools` 拆出 contracts、policies、registry、learning_snapshot、class_availability、
+    order_status、human_ticket 和 adapter_registry；
+  - 新增 `connectors/a2a` 的 contracts、task_builder、validation、local、http 和 dsh；
+  - 旧 `business_tools.py` 与 A2A integration 文件仅保留兼容重导出；
+  - `DisabledDSHConnector` 继续明确拒绝真实 DSH。
+- 报告任务服务：
+  - 新增 `services/reporting/constants.py`、`exceptions.py`、`commands.py`、`queries.py`、
+    `artifacts.py` 和 `integrity.py`；
+  - 保持新任务单 PDF、历史家长 Markdown/旧双产物兼容、教师只允许 PDF、状态机、
+    幂等、MinIO 服务端代理和每次资源关系重新鉴权；
+  - `services/report_tasks.py` 缩为兼容门面。
+- 兼容处理：
+  - `api.compat.main_symbol()` 保留 `settings`、`plan_conversation`、FAQ/服务规则流、
+    PDF 检查、班级授权、报告任务列表和依赖健康检查等历史测试替换点；
+  - Router 与 `main.py` 继续使用 `api/dependencies.py` 中相同函数对象，确保
+    FastAPI `dependency_overrides` 不因拆分失效；
+  - 没有修改 HTTP URL、Schema、SSE 事件、数据库迁移或部署入口。
+- 文件规模结果：
+  - `main.py` 从 1717 行降为 53 行；`graph.py` 从 560 行降为 42 行；
+  - `services/intent_recognition.py` 从 752 行降为 58 行；
+  - `services/report_tasks.py` 从 678 行降为 36 行；
+  - `tools/business_tools.py` 从 590 行降为 56 行；
+  - 当前 `backend/app` 共 115 个生产 Python 文件，最大文件为
+    `services/enrollment_leads.py` 的 480 行，超过 800 行为 0。
+- 验证结果：
+  - 报告任务拆分专项：`67 passed, 1 skipped, 4 warnings`；
+  - Supervisor 拆分相关专项：`77 passed, 1 skipped, 4 warnings`；
+  - Windows 后端最终全量：`419 passed, 8 skipped, 3 warnings`；
+  - `.venv\Scripts\python.exe -m compileall -q backend scripts tests`：通过；
+  - `git diff --check`：通过。
+- 跳过和警告：8 个跳过项仍来自 Windows WeasyPrint/Pango 环境和默认关闭的真实
+  外部模型测试；最终全量 3 条 warning 属于 Starlette `BlockingPortal` 和 FastAPI
+  `on_event` 既有弃用提示，部分专项命令另有一条 pytest `cache_dir` 配置提示。
+- 文档：新增
+  `docs/技术方案/项目收尾_Agent生产代码模块化重构与目录治理.md` 和
+  `docs/面试问答/项目收尾_Agent模块拆分与兼容迁移.md`，并同步 README、
+  PROJECT_HANDOFF、TECH_DECISIONS 与 DEFENSE_INTERVIEW_QA。
+- 外部边界：本次没有接入真实 DSH、MinIO、PostgreSQL、OIDC、RAGFlow、模型、
+  CRM 或教育机构数据；阶段 15-A-3 仍是“生产增强，暂缓”。
+- 阶段结论：生产代码目录已能直接表达 Agent 项目能力边界，兼容门面保住部署和
+  测试契约，全量回归证明这是代码组织重构而非业务重写。
+
+## 项目收尾：真实业务场景文案治理（完成）
+
+- 时间：2026-09-12（Asia/Shanghai）
+- 问题：纯问候“你好”在知识库和模型均未启用时进入旧离线 FAQ 兜底，向用户
+  返回“演示咨询通道、正式接入知识库后”等研发阶段说明。
+- 修复：
+  - FAQ 增加纯问候确定性短路；“你好、您好、嗨、Hello”等整句问候不访问
+    RAGFlow 或模型，直接由 uPil 学习顾问询问用户需要的业务服务；
+  - “你好，我想了解舞蹈课”等包含实际问题的消息仍进入正常意图与知识检索，
+    不被问候规则截断；
+  - 普通离线 FAQ、人工协助、A2A 学情摘要与家长报告全部改为面向家长/教师的
+    真实业务话术；
+  - 前端移除答辩调试开关、路由/供应方/来源等内部诊断展示，身份切换不再展示
+    内部用户编号；
+  - 本地工具接口、适配器和运行代码注释统一使用“本地联调/本地身份/样例数据”
+    等准确表述，避免运行时返回答辩或演示措辞。
+- 边界：测试、部署和认证仍保留 demo 等内部技术命名，以维持既有接口与配置兼容；
+  知识库中的虚构数据声明继续保留，防止样例价格、校区和人员资料被误认为真实
+  机构事实。
+- 验证：相关后端专项 98 passed；后端全量 422 passed, 8 skipped；前端
+  typecheck、12 个 Vitest、生产构建与 FastAPI 静态资源构建通过；实测
+  /api/v1/chat/stream 输入“你好”返回“您好，我是 uPil 学习顾问……”且不含研发
+  阶段措辞。
+
+## 项目收尾：教师媒体工作台退役（完成）
+
+- 时间：2026-09-12（Asia/Shanghai）
+- 产品决策：教师素材上传、双人复核和图片访问属于内容管理后台，不参与多 Agent
+  咨询、结构化学情、报告交付或招生线索主链；继续维护会扩大权限、对象生命周期和
+  后台页面范围，因此退出当前产品边界。
+- 删除范围：
+  - 删除后端媒体 Router、Presenter、`MediaAsset` ORM、媒体 Schema、图片上传/读取/
+    删除/预签名方法和媒体访问控制函数；
+  - 删除前端 `/teacher/media`、`MediaWorkspaceView`、媒体 API 客户端、类型、导航和
+    Bootstrap 功能开关；重新构建后的后端静态资源不含媒体分包；
+  - 认证权限白名单只保留 `lead_followup`，请求头、JWT 或数据库中的历史
+    `media_upload`、`media_review` 均失败关闭；
+  - 配置删除媒体桶、图片体积和预签名时间，可选依赖由 `media` 收缩并更名为
+    `storage`，`uv.lock` 已同步。
+- 保留范围：
+  - 家长和教师报告继续生成单份 PDF，保存至 MinIO 私有报告桶并通过 FastAPI 每次
+    重新鉴权后代理下载；
+  - `MinioMediaStore` 只作为稳定导入路径保留历史类名，当前仅提供报告 PDF 方法；
+  - `SourceReference.media_asset_id` 仅表示 RAGFlow 外部来源 ID，不对应本地媒体表或
+    图片下载地址；RAGFlow 自身对象存储配置不属于 uPil 媒体工作台。
+- 数据迁移：新增 `infra/production/migrations/006_retire_teacher_media_workspace.sql`，
+  删除历史媒体权限和 `media_assets` 表；迁移 003 保持不可变。历史 MinIO 图片由
+  运维按清单、保留策略和观察期独立处理，不在数据库事务中跨系统盲删。
+- HTTP 语义：根路径 SPA 静态挂载现在对落入静态层的未知 `/api/*` 统一返回 404，
+  避免退役 POST API 被误报为 405；Vue history 路由回退保持不变。
+- 全量回归修复：统一 Seed 已正式创建 T1004 销售顾问和 `lead_followup`，旧招生线索
+  测试夹具仍重复插入 T1004，导致全量执行出现唯一键冲突。夹具改为复用 Seed 身份，
+  仅补 T1006 隔离顾问；未修改线索业务状态机，专项恢复为 `21 passed`。
+- 文件规模：`backend/app` 当前共 114 个生产 Python 文件，最大 480 行，超过 800 行
+  为 0。
+- 验证结果：
+  - 媒体退役专项（storage/config/auth/database/API）：`129 passed, 3 warnings`；
+  - integrations 相关回归：`24 passed`；
+  - 招生线索 Seed/夹具兼容回归：`21 passed, 3 warnings`；
+  - Windows 后端全量：`421 passed, 8 skipped, 3 warnings`；
+  - frontend typecheck、`12 passed`、普通构建与 `build:backend`：通过；
+  - `.venv\Scripts\python.exe -m compileall -q backend scripts tests`：通过。
+- 跳过和警告：8 个跳过项来自 Windows WeasyPrint/Pango 环境和默认关闭的真实外部
+  模型测试；3 条 warning 为 Starlette `BlockingPortal` 与 FastAPI `on_event` 既有弃用
+  提示。
+- 文档：同步 README、PROJECT_HANDOFF、TECH_DECISIONS、DEFENSE_INTERVIEW_QA，
+  新增退役技术方案和专项面试问答；阶段 14-D/14-E 历史文档保留并标明历史方案。
+- 外部边界：没有接入真实 DSH、MinIO、PostgreSQL、OIDC、RAGFlow、模型、CRM 或
+  机构数据；本次是产品范围收缩与代码退役，不把本地验证结果表述为生产联调完成。
+
+## 项目收尾：多轮课程咨询上下文修复与人工验收场景（完成）
+
+- 时间：2026-09-13（Asia/Shanghai）
+- 问题：家长先咨询编程课程，下一轮只回答“12岁”时，孤立年龄可能被送入通用
+  FAQ/RAG 检索并召回中国舞等无关课程，导致已确认的编程上下文丢失。
+- 修复：
+  - 新增短期课程咨询槽位，保存当前会话中的孩子年龄和编程基础，不写入长期档案；
+  - “12岁”“没有学过图形化编程”“学过 Scratch”等紧凑回答由确定性课程流程
+    处理，不再作为孤立查询发送给 FAQ/RAG；
+  - 扩展“它、这个课程、那个课程、这个班、那个班”等指代消解；
+  - “不是少儿编程基础班，是编程项目实践班”等纠正语句以后出现的新课程为准；
+  - 显式切换到美术、舞蹈或音乐后清除不适用的编程基础，年龄仍可在短期会话保留；
+  - 班级统计和学情报告缺少周期时，支持下一轮用“上个月”“最近30天”等自然
+    语言补全，并继续经过原有身份鉴权、资源归属和数据库工作流；
+  - 实时名额等动态事实不由静态 FAQ 推断，在实时工具不可用时进入人工处理链路。
+- 自动化验证：
+  - 多轮场景与原始 HTTP 流式场景专项：`14 passed, 3 warnings`；
+  - Windows 后端全量：`445 passed, 8 skipped, 3 warnings`；
+  - `.venv\Scripts\python.exe -m compileall -q backend scripts tests`：通过；
+  - `git diff --check`：通过。
+- 人工验收场景清单：
+
+### 场景 1：编程课程年龄与基础槽位补全
+
+```text
+第1轮：还是想了解一下编程课
+第2轮：12岁
+第3轮：没有学过图形化编程
+第4轮：那更适合哪个班？
+```
+
+预期：始终沿用编程上下文；第2轮对比少儿编程基础班与编程项目实践班；第3轮
+识别“12岁 + 零基础”；第4轮推荐先从少儿编程基础班开始；不得出现中国舞。
+
+### 场景 2：代词指向具体课程
+
+```text
+第1轮：少儿编程基础班适合几岁？
+第2轮：它主要培养什么？
+第3轮：这个课程多少钱？
+第4轮：那个班可以试听吗？
+```
+
+预期：“它、这个课程、那个班”均指向少儿编程基础班；价格和试听进入对应知识或
+规则链路；不编造实时信息。
+
+### 场景 3：显式纠正错误课程
+
+```text
+第1轮：我想了解少儿编程基础班
+第2轮：不是少儿编程基础班，是编程项目实践班
+第3轮：这个课程适合几岁？
+第4轮：需要什么基础？
+```
+
+预期：第2轮将活动实体更新为编程项目实践班；后续回答10至14岁、建议已有图形化
+编程基础或通过教师评估，不再沿用被否定的基础班。
+
+### 场景 4：课程方向切换及无关槽位清理
+
+```text
+第1轮：我想了解编程课
+第2轮：孩子学过Scratch
+第3轮：不看编程了，改问少儿美术创意班
+第4轮：8岁
+第5轮：这个班适合吗？
+```
+
+预期：切换到美术后清除编程基础，但可保留年龄；按少儿美术创意班回答，不再推荐
+编程项目实践班。
+
+### 场景 5：没有课程上下文时不胡乱消解
+
+```text
+第1轮：你好
+第2轮：这个课程适合几岁？
+第3轮：我说的是音乐启蒙班
+第4轮：那它需要基础吗？
+```
+
+预期：第2轮先澄清具体课程，不随机选择班型；第3轮确认音乐启蒙班；第4轮的
+“它”指向音乐启蒙班。
+
+### 场景 6：多课程比较不污染原活动实体
+
+```text
+第1轮：我想了解中国舞基础班
+第2轮：6岁孩子适合学中国舞还是美术？
+第3轮：先说说它多少钱
+第4轮：我指的是刚才最开始问的那个班
+```
+
+预期：比较问题不随意覆盖原明确实体；后续应结合最开始确认的中国舞基础班处理，
+不将“它”错误指向模糊的美术大类。
+
+### 场景 7：项目实践班零基础分流
+
+```text
+第1轮：想了解编程项目实践班
+第2轮：孩子12岁
+第3轮：以前没学过，零基础
+第4轮：能直接上项目班吗？
+```
+
+预期：年龄符合但基础不足，建议先从少儿编程基础班开始，并保留教师评估作为最终
+判断；不能仅凭年龄直接推荐项目班。
+
+### 场景 8：项目实践班已有基础分流
+
+```text
+第1轮：想了解编程项目实践班
+第2轮：学过Scratch，也做过小游戏
+第3轮：12岁
+第4轮：那这个班适合他吗？
+```
+
+预期：识别图形化编程或项目基础及12岁年龄；推荐优先申请项目实践班教师评估；
+“这个班”和“他”均结合当前上下文处理。
+
+### 场景 9：实时名额与高意向边界
+
+```text
+第1轮：编程项目实践班适合几岁？
+第2轮：12岁，有Scratch基础
+第3轮：它现在还有名额吗？
+第4轮：如果有的话我想尽快报名
+```
+
+预期：“它”指向编程项目实践班；实时名额不由静态 FAQ 编造；工具不可用时转人工；
+第4轮可由招生意向旁路识别为高意向，联系方式仍须家长主动提供并明确同意后记录。
+
+### 场景 10：普通寒暄不污染后续意图
+
+```text
+第1轮：音乐启蒙班适合几岁？
+第2轮：好的，谢谢
+第3轮：孩子生病了怎么请假？
+第4轮：请假以后可以补课吗？
+```
+
+预期：“谢谢”按普通寒暄处理；第3轮切换到请假规则；第4轮继续请假和补课上下文，
+不得再次回答音乐课程年龄。
+
+### 场景 11：教师班级统计自然语言补周期
+
+```text
+第1轮：舞蹈二班缺勤最多的学员有哪些？
+第2轮：上个月
+第3轮：完课率呢？
+第4轮：哪些学员课时比较低？
+```
+
+预期：第1轮发现缺少周期后要求补充；第2轮识别自然语言周期并保留舞蹈二班；
+统计值由数据库确定性计算；教师只能访问自己实际授课的班级。
+
+### 场景 12：家长学情报告自然语言补周期
+
+```text
+第1轮：帮我生成孩子的学情报告
+第2轮：最近30天
+第3轮：生成好了吗？
+第4轮：我想下载这份报告
+```
+
+预期：第2轮补全自然语言周期并继续执行家长与孩子绑定校验；后续查询任务状态和
+下载当前报告；不得访问其他家长孩子的报告，PDF 不暴露内部敏感信息。
+
+### 附加场景：不同会话上下文隔离
+
+```text
+会话A第1轮：少儿编程基础班适合几岁？
+会话B第1轮：中国舞进阶班适合几岁？
+会话A第2轮：它多少钱？
+会话B第2轮：它多少钱？
+```
+
+预期：会话 A 的“它”只指向少儿编程基础班，会话 B 的“它”只指向中国舞进阶班，
+两个 `conversation_id` 之间不得共享活动实体或课程槽位。
+- 验收边界：上述文本既作为人工回归清单，也由
+  `tests/test_multiturn_scenarios.py` 和 `tests/test_api.py` 中的自动化用例覆盖核心路由；
+  人工测试价格、试听、实时名额、身份鉴权和下载时，应使用对应本地测试身份与样例
+  数据，不将本地验证结果表述为真实外部系统联调完成。
+
+## 项目收尾：移除 A2A/DSH 并统一学情分析 Agent（完成）
+
+- 时间：2026-09-13（Asia/Shanghai）
+- 架构决策：根据项目当前的单代码库、单权限域和单部署单元边界，移除 A2A/DSH
+  运行链路，不再保留独立学情子服务、服务令牌、跨进程状态字段、Compose 子服务
+  和远程协议测试；LangGraph 多 Agent 编排继续保留。
+- 学情能力收敛：Supervisor 将个人学情摘要、家长学情报告和教师班级报告统一路由到
+  `learning_analysis_agent`，再由三个单职责处理器分派执行。统一的是权限入口、状态
+  契约和报告执行边界，不是把三类业务逻辑堆入一个超大文件。
+- 报告链路：数据库负责权限和确定性统计，本地固定模板生成受控 Markdown，
+  `markdown-it-py + WeasyPrint + pypdf` 在内存中转换和复核单份 PDF；Markdown 不再
+  作为新 Artifact 落库。PDF 上传 MinIO 私有桶，下载请求由 FastAPI 每次重新校验
+  家长绑定或教师授课关系后代理返回。
+- 兼容安全：旧 Markdown 持久化兼容命令不再依赖已删除的 A2A 数据类型，迁移为当前
+  Markdown 白名单、命令脚本拦截、本地路径拦截和状态变更前校验；新报告执行路径
+  只写入 PDF Artifact，失败任务不展示半成品。
+- 配置与部署清理：删除 A2A/DSH 配置键、依赖健康探针、SSE A2A 状态字段、staging
+  Compose 子服务、生产模板中的远程服务配置和对应旧协议文件；历史阶段 13 文档
+  保留并标注为历史实验记录，README、交接文档、技术决策和面试问答同步现行方案。
+- 验证结果：报告专项 `70 passed, 7 skipped, 3 warnings`；相关 API、线索、班级统计、
+  staging 和 production 回归 `100 passed, 3 warnings`；Windows 后端全量
+  `393 passed, 8 skipped, 3 warnings`；前端 typecheck、Vitest `12 passed`、普通构建和
+  `build:backend` 均通过；`compileall` 和 `git diff --check` 通过。
+- 规模与边界：`backend/app` 当前 101 个生产 Python 文件，最大 485 行，超过 800 行
+  为 0。当前完成的是 SQLite、适配器和 Demo 身份下的可验证闭环；真实 MinIO、OIDC、
+  PostgreSQL、RAGFlow、模型、机构数据、生产容量和容灾安全联调仍未完成，不宣称生产
+  就绪，也不把历史 A2A/DSH 实验记录表述为当前运行能力。
+
+## 2026-09-13：项目收尾，上下文与记忆治理
+
+- 完成 backend/app/context/、backend/app/memory/conversation/、
+  backend/app/memory/structured/ 和 backend/app/memory/episodic/ 的职责化实现。
+- 增加不可变 ContextEnvelope、Agent projector、白名单 reducer、短期会话存储、最近
+  轮次与滚动摘要压缩，以及租户、用户、角色、会话和学员作用域隔离。
+- 增加结构化长期记忆的显式“记住”准入、敏感信息拒绝、字段白名单、同值去重、版本
+  冲突处理、删除恢复和学员作用域保护；联系方式、动态学情和报告状态不进入长期记忆。
+- 情景记忆只实现可替换协议和 Noop 默认实现。未配置嵌入模型时关闭，不影响正常聊天，
+  不为了引入向量检索而污染对话质量或扩大外部依赖。
+- 修复可选记忆异常不应穿透聊天 SSE、Redis 清理不误删锁键、Redis 只读不刷新 TTL，
+  以及 learner_id is NULL 的删除和恢复条件。
+- 新增 7 组专项测试，覆盖策略、Redis、结构化记忆、情景记忆、Envelope、reducer 和
+  聊天集成。专项结果：26 passed；后端全量结果：419 passed, 8 skipped, 3 warnings。
+- 本轮不回退工作区已有改动；生产 Python 文件行数扫描结果为超过 800 行 0。文档和
+  面试问答同步见 docs/技术方案/项目收尾_Agent上下文与记忆治理.md、
+  docs/面试问答/项目收尾_Agent上下文与记忆治理.md。
+
+## 2026-09-13：短期会话默认切换 Redis
+
+- 增加独立 `upil-redis` 容器、`upil_redis_data` 数据卷、密码鉴权、AOF everysec、
+  健康检查和本机 `127.0.0.1:16380` 映射；不复用 RAGFlow 的 Redis/Valkey。
+- 本地未提交 `.env` 已启用 `CONVERSATION_STORE_BACKEND=redis`，Python 环境安装
+  `redis 5.3.1`；staging 镜像改为安装 `storage,memory` extras，容器通过
+  `upil-redis:6379` 连接。示例配置仅保留占位符，未提交或输出真实 Redis 密码。
+- Redis 工厂在应用运行时执行 Ping，依赖缺失、鉴权错误或服务不可达时显式失败，
+  不静默回退进程内存；分布式锁改用独立短租约，避免与 30 分钟会话 TTL 绑定。
+- 依赖健康检查新增 Redis 脱敏状态；基础设施脚本检查容器、16380 端口和鉴权 Ping，
+  不在命令参数或输出中展示密码。
+- 新增工厂专项和锁租约用例。本机容器为 healthy，客户端 Ping 成功，API 进程停止并
+  重新启动后同一主体会话仍能恢复课程上下文；API、Redis 和工厂相关回归
+  `50 passed, 3 warnings`，记忆专项 `30 passed`，后端全量
+  `424 passed, 8 skipped, 3 warnings`。
+- 数据边界不变：Redis 只保存已脱敏会话窗口、滚动摘要和受控槽位；结构化长期记忆
+  仍由 PostgreSQL 管理，情景记忆仍默认关闭。单机 AOF 不表述为生产高可用。
+## 2026-09-14：启用结构化长期记忆自主写入与跨会话继承
+
+### 目标
+
+- 对课程兴趣、上课时间偏好和孩子昵称实现简单、可解释的自主判断；
+- 支持“请记住”显式写入和修改；
+- 将长期偏好保存到 PostgreSQL，并在新 `conversation_id` 中继承；
+- 不引入 Embedding、向量数据库或完整聊天历史长期存储。
+
+### 实现
+
+- `memory/structured/admission.py` 增加双准入：显式请求与高置信度稳定陈述；
+- 对敏感、动态、不确定、否定和临时表达执行确定性拒绝；
+- 课程名称使用项目课程白名单标准化，时间偏好和昵称使用窄正则提取；
+- 自主判断只允许新增或同值去重，遇到已有冲突值安全跳过；显式修改才生成新版本；
+- 聊天入口读取长期偏好后装配 ContextEnvelope，主回答结束后再执行可选写入，失败不阻断 SSE；
+- FAQ 只在课程推荐和上课时间问题中使用安全投影，避免污染价格、名额和动态学情；
+- 教师消息不自动形成家长孩子偏好，带 learner_id 时继续先做绑定权限检查；
+- 本地 `.env`、staging 和 production 模板启用 `MEMORY_WRITE_ENABLED=true`，代码默认值保持关闭；
+- 本机 PostgreSQL 执行 `007_add_agent_memory.sql`，未重置或删除已有业务表。
+
+### 边界复核
+
+- “孩子喜欢编程”“孩子喜欢周末上课”“孩子小名叫果果”允许自主写入；
+- “我想了解编程课”“孩子可能喜欢编程”“孩子暂时喜欢编程”拒绝自主写入；
+- “请记住明天上午有空”仍拒绝，因为显式指令不能把临时安排变成长期事实；
+- “不要记住孩子喜欢编程”优先识别为拒绝意图，不会被“记住”子串误触发；
+- “请记住孩子小名可能叫果果”仍拒绝，不确定昵称不能升级为长期事实；
+- 联系方式、密码、Token、身份证、银行卡、课时、出勤、名额、报告状态和完整聊天不入库；
+- 情景向量记忆继续使用 Noop，不配置 Embedding。
+
+### 当前验证
+
+- 相关专项与 API 回归：`83 passed, 3 warnings`；
+- 真实 PostgreSQL 冒烟：写入成功、新会话按主体/学员作用域读取成功，测试数据已清理；
+- 后端全量：`447 passed, 8 skipped, 3 warnings`；
+- `compileall -q backend scripts tests`：通过；
+- `git diff --check`：通过，仅有既有换行符提示；
+- 生产 Python 文件超过 800 行为 0，当前最大文件 480 行。
+
+## 2026-09-14：修复真实聊天课程咨询的长期记忆与多轮槽位复用
+
+### 问题
+
+- “请记住孩子喜欢编程”被旧 FAQ 话术拦截，错误回复为无法记住个人信息；
+- 显式记忆命令之后，“我们周末上午方便上课”没有复用前文的编程方向和孩子年龄，
+  又重复询问课程方向与年龄；
+- 上课时间偏好虽然已经被解析，但没有完整写回短期会话状态，后续轮次存在丢失风险。
+
+### 修复
+
+- 在 FAQ/RAGFlow 之前增加显式记忆命令确定性路由；只有 PostgreSQL 提交成功后才回复
+  “我记住了”，关闭、拒绝、未授权和存储失败均返回真实状态，不产生虚假确认；
+- 显式记忆命令不清空已有课程实体、孩子年龄和编程基础；
+- 新增 preference_values.py 统一解析稳定上课时间偏好，复用到课程回答和长期记忆准入；
+- 将 class_time_preference 贯穿 ConversationMemory、Redis、ContextEnvelope、
+  ConversationPlan 和短期状态写回；仅在本轮解析到新时段时覆盖，普通轮次保留旧值；
+- 教师角色、敏感信息、临时安排和不确定表达继续被长期记忆策略拒绝；
+- 清理本轮真实联调产生的测试记忆数据，未回退工作区原有改动。
+
+### 验证
+
+- 专项/API/会话回归：76 passed, 3 warnings；
+- 记忆与上下文相关回归：50 passed；
+- 后端全量：458 passed, 8 skipped, 3 warnings；
+- 目标文件 py_compile 通过，生产 Python 文件超过 800 行为 0；
+- 本机服务已重启至最新代码，GET /api/v1/health 返回 200；
+- 真实五轮链路已验证：年龄、编程方向和“周末上午”均能复用，第五轮不再重复追问。
+
+## 2026-09-14：修复试听承接不自然与跨会话线索幂等冲突
+
+### 问题
+
+- 多轮咨询后明确预约试听时，旧回答重复介绍课程、重新询问年龄/时段，并把家长引导到人工客服；
+- 家长端展示“高意向”等内部销售术语，主回答与线索卡重复表达；
+- 家长在不同会话中先形成泛化线索、后明确具体试听时，可能因为改写幂等键撞上已有活动线索，导致授权提示卡丢失；
+- 项目文档仍保留旧的授权询问文案和“家长端展示强度”描述。
+
+### 修复
+
+- 在已确认课程实体的前提下，新增明确试听/报名动作的确定性主回答，复用年龄、上课时段和本周安排；
+- 区分“怎么试听/试听流程”等普通咨询与“我想预约试听/请这周安排”等明确行动，不把信息咨询误升级为顾问队列；
+- 主回答只说明已整理需求和后续校区、时间、名额确认边界，不虚构预约成功，不重复课程介绍；
+- 家长端只展示课程、状态和自然授权提示，内部强度、队列和证据码仅供后端与销售顾问工作台使用；
+- 保持“主动提供联系方式 + 同一轮明确授权”门禁，联系方式继续在模型前脱敏并加密保存；
+- 跨会话优先复用同一家长、学员、课程和意向类型下的活动线索，避免重写泛化线索幂等键造成唯一索引冲突；
+- 新增回归覆盖课程纠错、指代消解、请假插话恢复、年龄/基础/时间槽位复用、试听流程边界、授权卡和跨会话活动线索复用。
+
+### 验证
+
+- 意向、线索和多轮课程专项：`67 passed, 3 warnings`；
+- 后端全量：`477 passed, 8 skipped, 3 warnings`；
+- 前端 typecheck：通过；Vitest：`12 passed`；普通构建与 `build:backend`：通过；
+- `compileall -q backend scripts tests`：通过；`git diff --check`：通过；
+- GET `/api/v1/health` 返回 200，服务已重启至最新代码；
+- 浏览器真实回放通过：最终试听回答复用孩子 12 岁、周末上午和本周安排，未出现“高意向”、人工客服或预约成功等不当表述。
+- 生产 Python 文件规模扫描：101 个文件，最大 523 行，超过 800 行为 0。
+
+
+## 2026-09-14：修复跨课程多轮咨询与线索联系方式承接
+
+### 用户反馈与根因
+
+- 家长已经在同一轮说明“12岁，没有编程基础”时，旧链路仍继续追问是否学过 Scratch，没有优先使用已经确认的零基础事实进行推荐；
+- 明确试听后，家长单独发送手机号时被普通聊天入口重新处理，返回欢迎语或泛化问候，没有承接 `awaiting_contact_consent` 线索；
+- “工作日晚上有具体班吗”“有空位吗”“现在有名额吗”等口语化实时查询没有全部命中原有关键词，部分请求落入静态 FAQ，产生看似确定但未经实时系统确认的旧话术；
+- 测试只覆盖编程样本，无法证明舞蹈、美术、音乐在服务规则插话和课程纠错后仍能保持上下文。
+
+### 本轮修复
+
+- 课程咨询解析优先使用同轮的年龄和编程基础：明确零基础时直接推荐少儿编程基础班，不再重复询问 Scratch；明确 Scratch 经历仍会识别为图形化编程基础；
+- 联系方式补全继续走前置专用路由：先脱敏，再查询当前家长/会话等待授权线索，命中后只更新原线索，不进入 Supervisor、FAQ、RAGFlow、普通 LLM 或长期记忆；
+- 在 `agents/supervisor/rules.py` 增加可解释的实时可用性识别，覆盖具体班、班次、名额、空位、还能报名以及带周末/工作日/上午/晚上等时段的“有班吗”表达；
+- 静态课程规则（什么时候上课、一周几次、单节多长）不会因为含有“时间”而误转人工；
+- 所有实时班次/名额口语表达统一为 `SCHEDULE_OR_SEAT -> human_handoff`，由销售顾问老师确认，不再进入 RAGFlow 猜测；
+- 新增四课程完整 HTTP 回放：编程、舞蹈、美术、音乐均覆盖年龄/基础、课程纠错、服务规则插话、指代恢复、时段复用、实时数据边界、试听线索和手机号/邮箱授权。
+- 补充修复跨会话复用已授权活动线索的边界：新会话重复预约后，线索会更新到新的会话引用；再次提供或更正联系方式仍进入专用补全路由，不会落回欢迎语或普通 FAQ。
+
+### 验证
+
+- 意图、会话、线索和联系方式专项：`140 passed, 3 warnings`；
+- API 与记忆集成相关回归：`58 passed, 3 warnings`；
+- 四课程完整 HTTP 多轮回放：`4 passed, 3 warnings`；
+- 联系方式与跨会话线索专项：`28 passed, 3 warnings`；
+- 后端全量：`514 passed, 8 skipped, 3 warnings`；
+- Python `compileall -q backend scripts tests`：通过；
+- `git diff --check`：通过，仅有既有换行符提示；
+- 前端 typecheck：通过；Vitest：`12 passed`；普通构建与 `build:backend`：通过。
+
+本轮没有接入真实排课、名额、CRM 或外部联系渠道；实时信息仍只做安全人工确认，不会从静态知识库、短期记忆或模型猜测动态事实。
+
+## 2026-09-14：完成浏览器端联系方式脱敏验收
+
+### 补充问题
+
+- 后端和 SSE 已经不回传联系方式明文，但聊天页仍会保留家长自己刚发送的完整手机号或邮箱；
+- 这不影响服务端安全边界，却不符合“聊天记录只展示脱敏联系方式”的真实页面验收要求。
+
+### 修复与验证
+
+- 聊天页只做最小联系方式外观识别，服务端完成处理后立即擦除用户消息中的原文，替换为“已提交联系方式（原文已隐藏）”；
+- 格式、授权和入库仍完全由后端判断，前端不复制业务状态机；后端安全投影继续只显示 `138****8000` 之类的掩码；
+- 新增 `frontend/src/views/ChatView.spec.ts`，断言 DOM 中不存在完整手机号；
+- 前端专项 `1 passed`、typecheck 通过、`build:backend` 通过；
+- 浏览器真实回放通过：12 岁零基础直接推荐基础班，明确试听生成安全线索卡，授权后不返回欢迎语，页面只显示“原文已隐藏”和脱敏联系方式。
+
+## 2026-09-14：销售顾问取消班级统计页面与权限
+
+### 调整原因
+
+- 销售顾问老师只负责承接和跟进家长授权后的招生线索，不承担授课、考勤或班级学情分析职责；
+- 如果仅隐藏导航但仍下发 `class_summary_read`，顾问仍可能通过直接地址或接口访问班级数据，既没有业务价值，也扩大了学员信息暴露范围。
+
+### 实现
+
+- 会话能力按权限画像互斥下发：普通授课教师获得 `class_summary_read`，销售顾问获得 `lead_followup`，不再同时获得班级统计能力；
+- 前端导航和路由守卫继续依赖服务端 capability，销售顾问侧自动只显示“对话中心”和“销售线索”，直接打开 `/teacher/classes` 会返回对话页；
+- 后端 `can_access_class` 增加纵深防御，带 `lead_followup` 的销售顾问即使直接调用班级统计或报告接口也会被拒绝；
+- 页面身份名称改为根据 `lead_followup` 能力判断，不依赖演示账号 `T1004`，便于后续切换真实认证。
+
+### 验证
+
+- 能力、路由权限和班级工具专项：`5 passed, 3 warnings`；
+- 后端全量：`516 passed, 8 skipped, 3 warnings`；
+- 前端全量：`13 passed`，typecheck 与 `build:backend` 通过。
+
+## 2026-09-14：扩展本地多用户身份切换与页面隔离
+
+### 实现
+
+- 页面身份切换器改为配置驱动，并按家长、授课教师、销售顾问分组；
+- 提供 3 个家长、2 个授课教师和 2 个销售顾问身份，页面直接显示为“家长P1001”等数据库业务账号，避免自造短编号造成身份对应歧义；
+- 新增第二位销售顾问 `T1006`，只授予 `lead_followup`，不授予班级统计能力；
+- 身份变化时使用身份级 key 重新挂载当前业务页面，避免旧身份聊天消息、报告、班级或线索状态残留在新身份页面；
+- 身份切换仍只在本地模式开放，生产 OIDC 或可信 Header 认证不显示该入口。
+
+### 验证
+
+- 身份配置与前端全量：`16 passed`，typecheck、普通构建和 `build:backend` 通过；
+- 数据库与会话专项：`57 passed, 3 warnings`；
+- 后端全量：`516 passed, 8 skipped, 3 warnings`；
+- PostgreSQL 幂等初始化补入 2 条记录：`T1006` 用户及其 `lead_followup` 权限；
+- 7 个身份的 `/api/v1/session` 实际请求全部成功，教师与顾问能力画像保持互斥；
+- `compileall -q backend scripts tests` 与 `git diff --check` 通过。
+
+## 2026-09-14：修复“查看孩子学情/学习报告”错误进入 FAQ
+
+### 用户反馈与根因
+
+- 家长输入“我想查一下我孩子的学习情况”“查看阶段反馈”时，旧链路把请求当作知识库 FAQ，只解释机构通常如何反馈，没有读取当前账号有权访问的真实学情数据；
+- “查看学习报告”没有与“生成学习报告”建立明确副作用边界，既不能给出已有报告入口，也容易在后续扩展中误触发报告任务；
+- 聊天请求没有内部 `learner_id` 时，节点仍依赖用户提供编号，不符合真实家长使用习惯，也会把内部资源标识暴露为交互前提；
+- 自动选择“数据库第一条孩子”虽然简单，但多孩子账号可能查错对象，因此必须把绑定解析和权限边界独立治理。
+
+### 实现
+
+- 将家长学情相关表达拆成三类确定性意图：实时个人学情 `learning_summary`、历史报告入口 `report_history`、新报告生成 `learning_report`；命中后不调用意图模型；
+- 实时个人学情直接调用受权限保护的数据库工具，回答剩余课时、累计消课、出勤率、缺勤、当前阶段、完成度、优势和下一步重点；不输出内部学员编号和 `teacher_note`；
+- 新增家长学员作用域解析服务：唯一有效绑定自动解析，多孩子未点名时要求按孩子姓名选择，点名唯一孩子时解析成功，停用孩子不参与候选；
+- 显式越权编号、学员不存在和绑定失效统一返回安全提示，不区分资源是否真实存在，也不泄露当前账号的其他候选孩子；
+- “查看学习报告”只返回固定站内路径 `/parent/reports`，不创建 `ReportTask`、不生成 PDF、不调用 FAQ/RAGFlow；
+- Vue 聊天页仅接受 `/parent/reports` 白名单动作并显示“查看学情报告”按钮，`/admin`、外部 URL 和 `javascript:` 路径均被拒绝。
+
+### 验证
+
+- 意图、家长学员解析和 API 专项：`95 passed, 3 warnings`；
+- 会话、多轮、记忆、学情工具、报告图和报告 API 相关回归：`114 passed, 3 warnings`；
+- 前端聊天专项：`5 passed`；typecheck、普通构建和 `build:backend` 均通过；
+- 后端全量：`532 passed, 8 skipped, 3 warnings`；
+- `compileall -q backend scripts tests` 与 `git diff --check` 通过；
+- 生产 Python 文件超过 800 行为 0，当前最大文件 525 行。
+
+## 2026-09-14：补齐报告周期专用澄清与多轮回归
+
+### 关联问题
+
+- 在“实时学情、历史报告、生成报告”完成分流后，真实多轮回放发现“生成学情报告”
+  未提供周期时虽然会安全进入 `clarification`，但仍返回通用的“请说明具体课程、
+  校区或业务问题”，没有承接当前报告业务；
+- 该问题不会错误创建报告任务，但会让家长误以为系统忘记上一轮意图，影响对话
+  连贯性。
+
+### 修复
+
+- 澄清节点改为按照 Supervisor 已确认的白名单意图选择固定业务文案；
+- 家长报告缺少周期时，明确提示“本月、上个月、最近30天”；
+- 班级学情缺少周期时，同样给出班级统计专用提示；班级本身也不明确时，同时要求
+  补充班级和周期；
+- 下一轮只回复“最近30天”等自然语言周期时，继续利用 `pending_intent` 恢复
+  `learning_report`，不退回 FAQ，也不要求填写开始日期和结束日期；
+- 澄清文案只依赖受控枚举和固定模板，不由模型生成业务参数。
+
+### 验证
+
+- 意图、会话、图、家长学员解析和 API 专项：`135 passed, 3 warnings`；
+- 多轮会话、记忆、学情、报告和招生线索相关回归：`162 passed, 3 warnings`；
+- 前端聊天入口专项：`5 passed`，typecheck 通过；
+- 后端全量：`534 passed, 8 skipped, 3 warnings`；
+- 跳过项仍为需要本机额外 PDF 原生依赖或显式外部服务配置的既有用例；
+- 3 条 warning 仍为 Starlette/FastAPI 既有弃用提示，不是本轮功能错误。
+
+## 2026-09-15：完成多 Agent 意图决策、上下文共享与会话状态机优化
+
+### 优化目标
+
+- 解决 UNKNOWN 统一进入 FAQ、问候访问 RAG、域外问题越界回答、礼貌插话清空
+  pending、复合试听动作覆盖主问题和模型槽位缺少确认门禁等问题；
+- 让主业务 Agent 与报课意向旁路读取同一份受控决策，避免分别猜测意图；
+- 保留现有 Redis 会话、PostgreSQL 长期偏好、报告 PDF/MinIO 和招生线索闭环，
+  不重新引入 A2A 或对话向量库。
+
+### 实现内容
+
+- 新增 `backend/app/dialogue/`，按 contracts、slots、unknown、classification、
+  pending 和 arbitration 拆分统一决策层；
+- 增加不可变 `TurnDecision`、`PendingFlow` 和带来源/确认状态的 `SlotValue`；
+- `ConversationPlan` 统一经仲裁器生成最终 route，并将同一决策写入
+  `ContextEnvelope` 供多 Agent 只读共享；
+- 主意图与试听/报名旁路意图分离，“价格 + 预约试听”先回答价格并保留线索分析；
+- UNKNOWN 拆分为寒暄、信息不足、域内不支持、域外、域内一般和未知；
+- LangGraph 新增固定 `small_talk`、`out_of_scope` 节点，澄清节点增加报告、班级和
+  无上文指代的专用文案；
+- 礼貌消息保留报告 pending，显式取消清除，自然语言周期恢复原流程；
+- 报告和班级统计只消费 `confirmed=True` 的槽位，模型推断值不能直接触发工具；
+- SSE complete 增加脱敏的 `primary_intent`、`secondary_intents`、`unknown_kind`；
+- 全量测试发现并修复报告幂等边界：同一日期范围的“自然月/显式日期”不再因
+  `period_type` 不同产生任务冲突，且不会重复生成或上传 PDF。
+
+### 提升效果
+
+- 纯问候、域外问题、无上文指代的 FAQ/RAG 调用在专项中由 1 次降为 0 次；
+- “生成报告 → 谢谢 → 上个月”可以连续完成，不再丢失任务；
+- “这个班多少钱，我还想预约试听”保留价格主回答和试听旁路；
+- 未确认模型周期不能进入报告工具；
+- 不同用户使用相同 `conversation_id` 仍保持实体和会话隔离；
+- 同一用户、对象和日期范围的不同自然语言说法复用同一报告任务和 PDF；
+- 主意图、旁路意图和 UNKNOWN 类型可通过安全枚举做离线评测。
+
+### 验证结果
+
+- 对话、意图、会话、记忆和招生专项：`140 passed, 3 warnings`；
+- 图、API、线索和家长学员解析相关回归：`96 passed, 3 warnings`；
+- 报告与对话补充回归：`121 passed, 3 warnings`；
+- 后端全量：`553 passed, 8 skipped, 3 warnings`；
+- 前端 typecheck 通过，Vitest `20 passed`，普通构建和 `build:backend` 通过；
+- `compileall -q backend scripts tests`、`git diff --check` 通过；
+- 生产 Python 最大 599 行，超过 800 行为 0。
+
+详细方案和面试口径：
+
+- `docs/技术方案/项目收尾_多Agent意图决策与上下文治理优化.md`；
+- `docs/面试问答/项目收尾_多Agent意图仲裁与会话状态机.md`。
+
+### 人工场景测评集同步
+
+- 根据统一 `TurnDecision`、UNKNOWN 细分类、pending 状态机、槽位确认门禁和多主体隔离，重写并丰富 `docs/测试与验收/项目收尾_真实场景多轮对话测评集.md`；
+- 原有 5 组业务场景扩充为 12 组，新增 UNKNOWN/FAQ 边界、报告 pending、主意图与试听旁路、教师班级槽位门禁、多子女与主体隔离、联系方式补全状态机和长对话一致性场景；
+- 增加 SSE 安全观察方法、决策字段解释、自动化测试映射、缺陷优先级和统一缺陷记录模板；
+- 文档中的预期行为均按当前源码和现有自动化测试编写，不以固定模型措辞作为通过条件。
+- 文档更新后回归统一决策、SSE 边界和多轮场景专项：`35 passed, 3 warnings`；warning 仍为既有 FastAPI/Starlette 弃用提示。
+
+## 2026-09-15：完成第三阶段 Router 模型、评测矩阵与决策日志优化
+
+### 实施内容
+
+- Supervisor Router 在依赖工厂固定 `temperature=0`，不再继承普通回答温度；
+- 增加可选 `LLM_ROUTER_MODEL`，未配置时继续复用 `LLM_MODEL`，本地无需额外
+  引入模型供应商；
+- 新增 `intent_router_examples.txt`，覆盖报告查看/生成、实时学情、课程详情、
+  价格加试听、实时排课、服务规则、指代和域外问题等高价值混淆样例；
+- 新增真实模型显式评测的主意图混淆矩阵、逐类 Precision/Recall/F1、实体、
+  live-data 和识别来源准确率；普通 pytest 不调用真实模型；
+- 新增 12 组、20 轮离线状态评测，量化路由、主/旁路意图、UNKNOWN、槽位值、
+  槽位来源、确认状态，以及 pending 建立/保留/恢复/取消；
+- 新增脱敏 `dialogue_decision` JSON 日志，只保留白名单枚举、槽位名称/来源、
+  回退原因和耗时，不记录消息正文、身份编号、联系方式、Prompt 或模型原始输出；
+- HTTP 集成测试验证模型未配置会记录 `model_not_configured`，手机号只转化为
+  `contact_redaction_applied=true`，日志无号码明文；
+- 多轮评测首次运行发现“帮我生成上个月的学情报告”未命中生成守卫，已将生成
+  判断改为报告对象词与动作词组合匹配，周期仍由确定性日期解析器确认。
+
+### 当前提升效果
+
+- Router 配置与结果更可重复，回答模型温度调整不会影响路由；
+- 高混淆意图具备可维护 few-shot，但权限、pending 和副作用没有转交给 Prompt；
+- 单轮模型错误可由混淆矩阵定位，多轮状态回归可由独立指标定位；
+- 结构化日志能区分确定性守卫、模型路径和安全回退，同时保持儿童与家长隐私；
+- 离线多轮评测 12 组、20 轮的所有指标均为 `100%`。该数字只代表合成确定性
+  回归集，不宣称为真实线上模型准确率。
+
+### 阶段验证
+
+- Router、Prompt、混淆指标、多轮评测和日志专项：`51 passed, 3 warnings`；
+- 对话状态机、API、记忆、招生与家长学员解析相关回归：`181 passed, 3 warnings`；
+- 后端全量：`567 passed, 8 skipped, 3 warnings in 59.17s`；
+- `.venv\Scripts\python.exe -m compileall -q backend scripts tests` 通过；
+- `git diff --check` 退出码为 0，仅提示工作区既有文件的 LF/CRLF 转换，不存在空白错误；
+- 生产 Python 文件超过 800 行为 0，当前最大文件为
+  `backend/app/services/conversation_state.py`，共 603 行；
+- 3 条 warning 仍为既有 FastAPI `on_event` 与 Starlette `BlockingPortal` 弃用提示，
+  不是本阶段业务失败。
+
+技术方案与面试口径已同步：
+
+- `docs/技术方案/项目收尾_多Agent意图决策与上下文治理优化.md`；
+- `docs/面试问答/项目收尾_多Agent意图仲裁与会话状态机.md`。
+
+## 2026-09-15：修复试听流程中的柔性暂缓与具体班型上下文
+
+### 问题与根因
+
+- 真实舞蹈咨询中，家长在问完“这个班怎么试听”后回复“我再考虑一下，先不用
+  安排”，旧逻辑把该句视为普通 UNKNOWN，最终进入 FAQ/通用澄清，回复要求重新
+  说明课程或业务问题；
+- 对话动作契约只有报告等待办的取消，没有“当前暂缓试听或报名、以后可恢复”的
+  柔性动作；
+- 主对话和招生线索旁路此前没有复用同一拒绝判断，存在前台确认暂缓但后台线索
+  仍待跟进的状态漂移风险；
+- 家长先说“舞蹈课”，再明确孩子 5 岁时，确定性推荐虽然回答了“舞蹈启蒙班”，
+  但活动实体仍可能保留为“舞蹈”大类，导致后续指代和线索卡不够精确。
+
+### 修复内容
+
+- 新增 `DialogueAct.DEFER`，将试听/报名柔性暂缓与报告任务 `CANCEL` 明确分开；
+- 扩充“先不用安排、暂时不预约、先不试听、先不报名”等确定性表达，并由主对话
+  与招生旁路共享 `has_explicit_enrollment_decline()`；
+- 课程上下文中的暂缓固定路由到 `small_talk`，不调用 FAQ/RAGFlow，返回尊重用户
+  决定且允许以后接续的自然文案；
+- 已有招生线索同步转为 `withdrawn`，清除联系方式密文、指纹、脱敏值和授权时间，
+  写入审计记录，不再进入销售顾问待跟进列表；
+- 增加确定性班型收敛：只有课程大类结合用户明确年龄/基础后唯一匹配时，才将
+  推荐结果写为非显式、高置信度活动实体；多个班型同时适龄时继续保留课程大类，
+  不替家长武断选择；
+- 因此“舞蹈课 → 孩子 5 岁 → 这个班 → 先不用安排 → 想好了继续预约”全程使用
+  “舞蹈启蒙班”上下文，并允许后续重新建立试听线索。
+
+### 验证结果
+
+- 暂缓专项、HTTP/SSE、招生意向和线索闭环：`69 passed, 3 warnings`；
+- 对话状态、跨课程多轮与意图相关回归：`86 passed`；
+- 用例覆盖舞蹈、美术、音乐、编程的暂缓表达、FAQ 零调用、线索撤回、联系方式
+  清理、课程上下文保留和重新预约；
+- 3 条 warning 仍为既有 FastAPI `on_event` 与 Starlette `BlockingPortal` 弃用提示，
+  不是本轮业务失败。
+## 2026-09-15：会话历史 MVP 与 Redis 过期恢复闭环
+
+### 实现范围
+
+- 聊天页增加会话历史侧栏，只实现会话列表、继续旧会话、新建、重命名和删除；
+- 新增 `/api/v1/conversations` 会话目录接口，以及单会话消息读取、重命名和删除接口；
+- PostgreSQL 新增 `chat_conversations`、`chat_messages`，只保存会话目录、受控上下文快照和脱敏后的用户可见消息；
+- Redis 继续保存当前实体、已确认槽位、pending、滚动摘要和最近轮次；Redis TTL 过期后由 PostgreSQL 快照与少量最近消息恢复，不重放完整历史；
+- 所有读取、修改、删除和聊天续接均使用 `tenant_id + owner_user_id + owner_role + conversation_id` 校验主体；不存在与越权统一返回 404；
+- 手机号、邮箱、Token 和内部地址在进入 PostgreSQL 前再次脱敏，联系方式提交完成后前端同步擦除页面中的明文；
+- 删除会话只删除目录、消息和对应 Redis 短期状态，不删除招生线索、报告任务/产物和结构化长期偏好；
+- 修复服务规则分支只发送 SSE、没有汇总到 `answer_parts` 的缺陷，保证请假、调课等回答刷新后仍可恢复；
+- 修复 Unicode `\w` 把中文视为单词字符导致“手机号或parent@example.com”邮箱漏脱敏的问题；
+- 当前没有增加搜索、置顶、分享、附件、会话分支或完整聊天向量化。
+
+### 关键文件
+
+- `backend/app/conversations/`：领域模型、HTTP 契约、仓储、应用服务、脱敏和恢复；
+- `backend/app/api/routers/conversations.py`：会话历史 HTTP API；
+- `backend/app/memory/conversation/serialization.py`：Redis/PostgreSQL 共用的白名单序列化；
+- `frontend/src/api/conversations.ts`、`frontend/src/components/chat/`、`frontend/src/views/ChatView.vue`：前端闭环；
+- `infra/production/migrations/008_add_chat_conversations.sql`：生产增量迁移；
+- `tests/test_conversation_history.py`、`tests/test_conversation_recovery.py`：专项覆盖。
+
+### 验证
+
+- 会话历史、恢复和 Redis 专项：`17 passed`；
+- 服务规则持久化与相关 API/记忆回归：`18 passed, 3 warnings`；
+- 前端：typecheck 通过，Vitest `26 passed`，普通构建和 `build:backend` 通过；
+- 后端全量：`586 passed, 8 skipped, 3 warnings`；
+- `compileall backend scripts tests` 通过；新增生产 Python 文件均低于 800 行，当前会话路由最大 202 行；
+- 本机 PostgreSQL 已执行 `008_add_chat_conversations.sql`；staging API 已重新构建，数据库、Redis、MinIO 和 RAGFlow 依赖健康状态均为 `ok`；
+- staging 实际完成创建、列表、重命名、删除和服务规则回答持久化冒烟；本机实际清空 Redis 会话键后，成功从 PostgreSQL 恢复年龄槽位和最近 2 条消息。
+
+## 2026-09-16：修复本地多身份聊天 HTTP 404
+
+### 问题现象与根因
+
+- 家长 P1002、P1003 以及教师、销售顾问切换后，身份会话接口和会话目录接口均正常，
+  但向该身份自己的会话发送聊天消息时返回 `404 会话不存在`；P1001 因为正好是
+  Demo 默认家长而未暴露问题；
+- 前端统一通过 URL 查询参数发送 `actor_role`、`actor_user_id`；会话目录接口会读取
+  查询参数，但聊天 SSE 接口此前只读取 `ChatRequest` 请求体中的兼容身份字段；
+- 前端聊天请求体只发送消息和 `conversation_id`，因此聊天认证实际总是退回 P1001。
+  会话所有权校验随后正确拒绝 P1001 读取 P1002 等主体的会话，形成 404；
+- 根因是同一页面的“创建/读取会话”和“发送聊天”使用了两套不一致的 Demo 身份输入
+  来源，不是数据库身份缺失，也不能通过放松所有权校验解决。
+
+### 修复内容
+
+- `backend/app/api/routers/chat.py` 为 SSE 路由增加经过 `ActorRole` 校验的查询参数；
+- 身份解析规则改为“查询参数优先、旧请求体字段回退、均缺失时使用认证服务默认值”；
+- trusted headers 和 OIDC 仍由认证服务忽略全部 Demo 字段，客户端查询参数不能覆盖
+  可信身份；
+- 保持 `tenant_id + owner_user_id + owner_role + conversation_id` 所有权校验不变，
+  其他用户访问会话仍统一返回 404；
+- 增加独立 HTTP 边界专项、真实 API 多身份回归和前端 SSE URL 身份断言，覆盖
+  P1002、P1003、T1001、T1002、T1004、T1006。
+
+### 验证结果
+
+- 身份路由专项：`4 passed`；
+- API 多身份、会话、恢复和认证相关回归：`82 passed, 3 warnings`；
+- 前端全量：`27 passed`，typecheck 通过；
+- 后端全量：`599 passed, 8 skipped, 3 warnings`；
+- 3 条 warning 仍为既有 FastAPI/Starlette 弃用提示；
+- 已重新构建并启动 staging API，容器健康检查为 `healthy`；随后分别在 staging
+  `18000` 和本地页面端口 `8000` 完成 P1001、P1002、P1003、T1001、T1002、
+  T1004、T1006 的真实 HTTP 冒烟：session=200、创建会话=201、聊天=200、
+  历史读取=200，并确认 P1001 读取 P1002 会话仍返回 404；
+- 浏览器原先连接的 8000 进程启动于会话目录功能加入之前，运行内存中没有
+  `/api/v1/conversations` 路由。代码修复后已重启 8000 服务；冒烟产生的临时会话
+  和前期诊断产生的 3 个空会话均已按所有者精确删除。
+
+## 2026-09-16：修复 MinIO 与 RAGFlow 宿主机端口失效
+
+### 问题现象与根因
+
+- staging API 的 `18000/api/v1/health` 实际持续返回 HTTP 200；
+- MinIO Console `19001` 和 RAGFlow Web `19080` 没有宿主机监听，容器虽然运行，
+  `NetworkSettings.Ports` 却没有生效映射；
+- Windows/Hyper-V 动态保留了 `18916-19415` 端口段，原来的 `19000/19001`、
+  `19080`、`19380-19384` 均落在该范围。Docker 重建时因此报端口绑定权限错误；
+- 该问题不是 MinIO、RAGFlow 数据损坏，也不是应用健康接口故障。
+
+### 修复内容
+
+- MinIO 主机 API/Console 端口调整为 `29000/29001`；
+- RAGFlow Web、HTTPS、API 和内部管理端口调整为
+  `29080/29443/29380-29384`；
+- 同步根目录本机环境变量、配置默认值、Compose 示例、基础设施检查脚本和使用文档；
+- 仅重建 MinIO 与 RAGFlow 应用容器，保留全部 Docker 卷，没有执行 `down -v`。
+
+### 验证结果
+
+- `http://127.0.0.1:29001/browser/upil-reports`：HTTP 200；
+- `http://127.0.0.1:29080/datasets`：HTTP 200；
+- `http://127.0.0.1:18000/api/v1/health`：HTTP 200；
+- `scripts/check_infrastructure.ps1` 全部检查通过，PostgreSQL、MinIO、uPil Redis
+  与 staging API 容器保持运行。
+
+## 2026-09-16：统一 API UTC 时间契约与本地时区展示
+
+### 问题现象与根因
+
+- Windows 本机为 `Asia/Shanghai`（UTC+8），uPil API、PostgreSQL、Redis 和 MinIO
+  容器使用 UTC；两者的系统时间实际对应同一绝对时刻，容器并没有慢 8 小时；
+- PostgreSQL 业务时间使用 `TIMESTAMP WITHOUT TIME ZONE` 保存 UTC 裸值，后端此前
+  返回 `2026-09-16T01:57:41` 这类不含偏移的字符串；
+- 浏览器会把无偏移字符串当作本地时间，导致页面直接显示 `01:57`，而不是将 UTC
+  换算成北京时间 `09:57`；因此根因是 HTTP 时间契约丢失时区语义，不是 NTP、
+  Docker 时钟或数据库数据错误。
+
+### 修复内容
+
+- 新增响应层 `UtcResponseModel`：数据库读取出的 naive `datetime` 按既有约定解释为
+  UTC，所有 API 时间统一输出带 `Z` 的 ISO 8601 字符串；带时区时间先换算为 UTC；
+- 会话历史、报告任务/产物、销售线索和跟进记录响应统一使用该契约，请求模型保持
+  不变，销售顾问提交的 `datetime-local` 仍由浏览器转换为带时区 ISO 时间；
+- 前端新增公共时间解析与格式化工具：新版带 `Z` 时间按浏览器本地时区展示，同时
+  将旧接口或旧缓存中的无后缀值兼容解释为 UTC；
+- 数据库继续保存 UTC，未批量修改历史数据，也未把业务时间改成北京时间裸值。
+  容器保持 UTC 是跨服务部署的正常设计，页面显示由浏览器本地时区负责。
+
+### 验证结果
+
+- UTC 响应契约、会话、报告、线索相关后端回归：`90 passed, 3 warnings`；
+- 后端全量：`603 passed, 8 skipped, 3 warnings`；
+- 前端 Vitest：`30 passed`，typecheck 与生产构建通过；
+- 专项覆盖 UTC 裸值补 `Z`、UTC+8 输入换算、分页嵌套响应、请求时区不被改写、
+  旧无后缀值兼容解析和北京时间格式化；
+- 已重新构建 staging API，容器健康状态为 `healthy`，数据库、Redis、MinIO 和
+  RAGFlow 依赖探针均为 `ok`；真实会话接口原始 JSON 已返回
+  `2026-09-16T01:57:41.409852Z`，对应北京时间 `2026-09-16 09:57:41`；
+- 3 条 warning 仍为既有 FastAPI/Starlette 弃用提示，不是本轮时间契约失败。
+
+## 2026-09-16：修复 RAGFlow OllamaEmbed 连接失败
+
+### 问题现象与根因
+
+- RAGFlow 页面执行文档解析或 Embedding 检查时返回 `102 Embedding failure`，
+  提示无法连接 `OllamaEmbed`；
+- `bge-m3:latest` 模型及其本地权重均完整存在，RAGFlow、MySQL、Elasticsearch
+  也处于运行状态，因此问题不是模型缺失或知识库损坏；
+- Windows/Hyper-V 动态保留了 `11328-11527` 端口段，Ollama 默认端口 `11434`
+  落在该范围内，进程无法绑定该端口；
+- RAGFlow 中 `bge-m3` 模型实例仍指向
+  `http://host.docker.internal:11434`，最终导致容器无法调用宿主机的嵌入服务。
+
+### 修复内容
+
+- 将 Ollama 监听地址调整为 `0.0.0.0:11528`，保留原模型目录
+  `D:\ollama\model`；
+- 将 `OLLAMA_HOST` 与 `OLLAMA_MODELS` 写入当前 Windows 用户环境变量，沿用既有
+  登录启动快捷方式，使后续登录启动的 Ollama 继承新端口配置；
+- 仅将 RAGFlow 中 `bge-m3` 模型实例的 Base URL 更新为
+  `http://host.docker.internal:11528`，没有替换模型、重建知识库或删除索引；
+- 重启 RAGFlow 应用容器，使模型实例配置重新加载。
+
+### 验证结果
+
+- Ollama 已监听 `0.0.0.0:11528`，`/api/tags` 能识别 `bge-m3:latest`；
+- `/api/embed` 实际请求成功，返回 1 个 1024 维向量，与现有知识库向量维度一致；
+- RAGFlow 容器可以访问 `host.docker.internal:11528`，Web 页面
+  `http://127.0.0.1:29080/datasets` 返回 HTTP 200；
+- 公开课程问答与服务规则问答均重新使用 RAGFlow 返回有效引用，分别召回 3 条和
+  2 条来源，确认查询 Embedding 与 Elasticsearch 向量检索链路已恢复；
+- 模型冷启动的第一次请求可能超过应用当前 15 秒超时，模型加载完成后的请求正常。
+
+## 2026-09-16：修复课程装备追问、复合实时咨询与拒绝联系状态冲突
+
+### 问题现象与根因
+
+- “它需要自己买乐器吗”能够继承童声合唱班实体，但课程静态属性只覆盖年龄和基础，
+  装备问题仍进入 FAQ/RAGFlow；外部服务瞬时异常时，流式响应可能中断为 HTTP 503；
+- FAQ 和服务规则虽处理了常见 HTTP 异常，但上层没有收敛第三方适配器可能抛出的
+  其他异常，导致外部知识服务故障影响主聊天链路；
+- “现在有名额吗？费用多少？”同时包含 `available_seats` 和 `price`，但实时数据路由
+  原来只生成名额说明，遗漏费用边界；
+- “暂时只是了解，不用联系我”包含正向子串“联系我”，且联系方式补全门禁先于普通
+  对话仲裁执行，导致否定表达仍可能重新进入授权补全流程，已有线索也无法正常撤回。
+
+### 修复内容
+
+- 新增独立课程装备目录 `backend/app/services/course_equipment.py`，覆盖舞蹈、美术、
+  音乐和少儿编程 9 个课程；装备、材料、乐器、自带设备等稳定事实走确定性短路；
+- 课程属性解析增加 `equipment`，使“它/那个班”先完成课程指代消解，再由受控目录回答；
+- FAQ 与服务规则增加最外层安全降级，RAGFlow/SDK 意外异常不再中断 SSE，也不会向
+  家长暴露 URL、Token 或内部异常正文；
+- 人工兜底节点按请求属性分别覆盖“名额”“费用”“名额 + 费用”，不编造实时数据，
+  也不因普通咨询强制索取联系方式；
+- 招生意图增加“不用联系我/暂时不用联系我/先不联系我”等否定表达，并坚持否定优先；
+- 联系方式补全门禁在执行前检查明确拒绝。拒绝轮继续进入 `small_talk` 和招生旁路，
+  由统一线索服务撤回已有线索、清除联系方式密文，并停止生成授权提示。
+
+### 验证结果
+
+- 三条核心回归：`3 passed`；
+- 对话、招生、异常降级专项：`121 passed, 3 warnings`；
+- 意图、状态、API 和线索相关回归：`154 passed, 3 warnings`；
+- 后端全量：`613 passed, 8 skipped, 3 warnings`；
+- 修复覆盖编程、舞蹈、美术和音乐多场景，不是只对童声合唱单句打补丁；
+- 3 条 warning 仍为既有 FastAPI/Starlette 弃用提示，与本轮业务修复无关。
+
+## 2026-09-16：修复 staging 长期偏好无法保存与读取误判
+
+### 问题现象与根因
+
+- 家长发送“请记住孩子喜欢编程”“请记住孩子的小名叫果果”时，页面返回
+  “暂时无法保存这项偏好”；
+- 数据库迁移和记忆写入代码均已存在，真正原因是页面使用的 staging API 加载
+  infra/staging/.env.staging，其中遗漏 MEMORY_WRITE_ENABLED=true，运行时采用
+  默认关闭值；
+- 读取侧另有两个边界问题：只要句中包含“记住”就会被误判为新的写入命令；
+  即使偏好已经正确投影给 FAQ，RAGFlow 中的旧话术仍可能回答“无法调取记忆”。
+
+### 修复内容
+
+- 在本机 staging 私有配置中开启结构化长期记忆写入，保持情景向量记忆关闭；
+- 显式记忆命令改为句首祈使表达识别，支持“请记住、帮我记一下、以后记得”等，
+  排除“以前记住的偏好、你还记得吗、不要记住”等读取或否定表达；
+- 明确引用已保存偏好进行课程推荐时，由结构化记忆投影生成确定性回答，不再让
+  外部知识库判断系统是否具备记忆能力；具体班次、价格和名额仍不从偏好推断；
+- 课程兴趣、稳定上课时段和孩子昵称继续保存在 PostgreSQL，Redis 只负责当前会话
+  短期状态；手机号、动态学情和一次性时间安排仍被准入策略拒绝。
+
+### 验证结果
+
+- staging 运行配置已确认 memory_write_enabled=True，数据库、Redis、MinIO、
+  RAGFlow 依赖探针均为 ok；
+- 真实 HTTP 写入验证成功：course_interest=编程、
+  class_time_preference=周末上午、child_nickname=果果；显式命令完成事件均为
+  route=memory, memory_status=stored；
+- 新会话中的“请根据以前记住的课程兴趣和上课时间推荐课程”不再进入写入路由；
+- 记忆、上下文和会话专项 86 passed，API、多轮与对话决策相关回归
+  98 passed, 3 warnings，compileall 与 git diff check 通过；
+- 私有 infra/staging/.env.staging 被 Git 忽略，不提交其中的真实密钥；仓库中的
+  .env.staging.example 已保留正确开关示例。
+
+## 2026-09-16：配置治理、RAGFlow 深探针与真实业务闭环复验
+
+### 治理内容
+
+- 新增集中式配置审计与运行时契约校验，受管环境强制使用 Redis 会话、开启结构化长期记忆写入，并校验 PDF/MinIO、RAGFlow 双知识域和 LLM 配置的成组依赖；
+- 正式移除 `MEDIA_MAX_BYTES`、`MINIO_BUCKET`、`MINIO_PRESIGNED_URL_SECONDS`、`RAGFLOW_CHAT_ID` 等已不再生效的旧变量；历史文档中的兼容记录仅作为阶段事实保留；
+- RAGFlow 公开咨询与服务规则使用独立 Assistant，避免机构知识和办理规则相互污染；
+- 新增 `/api/v1/health/dependencies/deep`，真实调用两个 RAGFlow Assistant，但响应只返回低敏感状态枚举；原依赖探针继续承担高频浅检查；
+- 基础设施脚本新增 RAGFlow Console、Ollama 模型目录、容器到宿主机 Ollama 网络和双知识域深探针检查；脚本使用 UTF-8 BOM，兼容 Windows PowerShell 5.1 中文解析；
+- Windows 登录自启快捷方式已改为执行 `D:\ollama\ollama.exe serve`，而不是只打开桌面应用。Ollama 使用 11528 并加载 `bge-m3:latest`。
+
+### 真实环境验证
+
+- staging API 已由当前工作区重新构建，容器 `healthy`；浅探针的 database、redis、minio、ragflow、structured_memory 全部为 `ok`；深探针两个知识域均为 `ok`；
+- FAQ 与服务规则真实聊天分别得到 `route=faq/provider=ragflow` 和 `route=service_rules/provider=ragflow`；
+- 家长 P1008 的临时验证确认 Redis 多轮续接、三类结构化偏好写入以及新会话跨线程继承；
+- 真实生成 2026 年 8 月家长报告，任务为 completed，MinIO 对象键非空，下载为 HTTP 200、`application/pdf` 且文件头为 `%PDF-`；P1002 下载同一任务返回 404；
+- 冒烟结束后精确删除本轮 MinIO 对象、下载审计、报告产物、报告任务、三条长期偏好和两个临时会话；复核 P1008 的 conversations/memories/reports 均为 0，没有清理其他账号数据。
+
+### 测试记录
+
+- 配置、API、集成与受管环境专项：`140 passed, 3 warnings`；
+- 增强后的 `scripts/check_infrastructure.ps1` 全项通过；
+- 最终全量测试、配置审计、编译和文件长度结果见本日志后续最终验收记录。
+
+## 2026-09-16：配置治理最终验收
+
+- 后端全量测试：`633 passed, 8 skipped, 3 warnings in 61.69s`；
+- 前端 Vitest：`8 files passed, 30 tests passed`；`vue-tsc --noEmit` 与 Vite 生产构建通过；
+- `compileall -q backend scripts tests` 通过；配置审计通过；`git diff --check` 通过，仅有换行转换提示；
+- 生产 Python 文件超过 800 行为 0，当前最大文件为 `backend/app/services/conversation_state.py`，616 行；
+- 3 条 warning 为既有 Starlette/FastAPI 弃用提示，不是本轮功能失败；
+- staging API、PostgreSQL、Redis、MinIO、RAGFlow 及其 MySQL/Elasticsearch/Redis 容器保持运行；增强基础设施检查全部通过。
+
+## 2026-09-16：修复跨会话长期偏好的字段级回忆
+
+### 问题与根因
+
+- 家长已经成功写入 `child_nickname=果果`，但在新会话询问“你还记得孩子的小名吗？”时返回通用 UNKNOWN 澄清；
+- PostgreSQL 写入、用户作用域和跨会话投影均正常。缺陷位于读取入口：原逻辑只支持“根据以前记住的偏好推荐课程”，没有覆盖昵称、课程兴趣和上课时间的直接回忆；
+- Supervisor 会把昵称回忆问句判为 `clarification`，而结构化记忆回答器原来只在 `faq` 分支调用，因此即使数据库已有值也没有机会读取。
+
+### 修复与验证
+
+- 增加三个低敏感白名单字段的确定性回忆问法，询问哪个字段只返回哪个字段；字段不存在时明确说明“未查到已保存信息”，不虚构内容；
+- 在结构化记忆按可信身份完成安全投影后、执行路由前尝试字段级读取，允许明确回忆问句把 `clarification` 安全收敛为 `faq/workflow`；不调用 RAGFlow、不产生新记忆版本，也不覆盖人工转接等有副作用路由；
+- 增加昵称、兴趣、上课时段、字段缺失、普通 FAQ 不误拦截、新会话读取和 P1001/P1002 身份隔离测试；
+- 专项与 API 回归：`83 passed, 3 warnings`；记忆、会话与多轮相关回归：`104 passed`。
+
+## 2026-09-16：项目收尾工作区归档与提交前验收
+
+### 本次归档范围
+
+- 统一提交此前分阶段完成但尚未入库的多轮意图仲裁、槽位确认、pending 状态机、
+  UNKNOWN 分类、决策日志和离线评测工具；
+- 归档会话历史 MVP，包括会话列表、新建、继续、重命名、删除、主体隔离、消息脱敏、
+  PostgreSQL 快照和 Redis 过期恢复；
+- 归档家长实时学情、历史报告入口、自然语言报告周期、家长与教师 PDF 报告、MinIO
+  私有交付和下载重新鉴权；
+- 归档课程多轮咨询、课程装备事实、服务规则降级、复合实时咨询、报课意向旁路、
+  联系方式授权和销售顾问最小权限；
+- 归档结构化长期偏好写入、跨会话读取和字段级回忆，继续只允许课程兴趣、稳定上课
+  时段和孩子昵称三个低敏感字段；
+- 归档配置审计、RAGFlow 双 Assistant、深度依赖探针、本地多身份配置、前端会话工作台、
+  数据库迁移和重新构建的后端静态资源；
+- `.codex_tmp/`、`data/runtime-checks/`、本地数据库、日志和报告冒烟产物保持在 Git 之外。
+
+### 最终验证
+
+- 后端全量：`643 passed, 8 skipped, 3 warnings in 81.79s`；
+- 前端 Vitest：`8 files passed, 30 tests passed`；
+- 前端 `build:backend` 通过，包含 `vue-tsc --noEmit` 和 Vite 生产构建；
+- 配置审计和 `compileall -q backend scripts tests` 通过；
+- 生产 Python 文件超过 800 行为 0，本次扫描最大文件为
+  `backend/app/services/conversation_state.py`，560 行；
+- `git diff --check` 无空白错误，仅有 Windows 工作区换行转换提示；
+- 3 条 warning 仍为 Starlette `BlockingPortal` 和 FastAPI `on_event` 的既有弃用提示；
+- 8 个 skip 为需要特定 PDF/真实模型环境的条件测试，不代表本次业务回归失败。
+
+### 项目边界
+
+- 当前多 Agent 是职责、上下文投影和工具权限隔离，不是每个 Agent 独立部署；
+- 当前运行架构不再使用 A2A/DSH，学情分析由本地统一 Agent 和确定性工具完成；
+- RAGFlow 负责文档知识检索，不负责身份权限、动态学情、实时排课、名额和收费确认；
+- 真实 OIDC 身份提供方、CRM、电话短信、支付、情景向量记忆以及报告异步补偿和对象
+  对账仍未纳入当前个人作品项目闭环，不得在答辩材料中描述为已上线能力。
+
+## 2026-09-17：招生线索 Outbox 与飞书通知闭环
+
+### 业务目标与方案
+
+- 保留 uPil 线索池作为唯一事实源，飞书只负责让销售顾问及时获知新线索；
+- 线索更新和低敏通知事件通过 PostgreSQL Transactional Outbox 同事务提交；
+- 网络派发由应用内后台任务在提交后执行，飞书超时或失败不会阻塞家长聊天、
+  不回滚已保存线索；
+- 当前规模不引入 Kafka、RabbitMQ 或 Celery，使用数据库行锁、到期轮询、线性退避
+  和遗留 `sending` 恢复完成轻量可靠投递。
+
+### 实现内容
+
+- 新增 `lead_notification_outbox` ORM 和 `009` 生产迁移，状态包括 `pending`、
+  `sending`、`retry`、`sent`、`failed`；
+- 支持中意向首次形成、高意向待联系方式授权、联系方式首次授权三个事件；默认仅通知
+  高意向，中意向可通过配置开启；
+- 使用 `lead_id + event_type + channel + intent_version` 唯一约束及数据库保存点处理
+  并发幂等，通知冲突不能破坏线索主事务；
+- 飞书适配器仅发送课程、意向、授权状态和顾问工作台入口，不发送明文联系方式、
+  家长原话、聊天记录、用户内部编号、密文或指纹；
+- 增加后台派发器生命周期、通知配置门禁和脱敏健康状态；默认关闭，生产 Webhook
+  与顾问入口必须使用 HTTPS，Webhook 只允许通过未提交配置或 Secret 注入；
+- 新增专项技术方案和面试问答，说明一致性边界、至少一次投递、潜在重复与扩展路径。
+
+### 验证结果
+
+- 专项与相关回归首轮：`129 passed`；
+- 覆盖默认关闭、中意向阈值、高意向待授权、授权后通知、事件幂等、低敏载荷、
+  成功发送、超时重试、最终失败、配置门禁和生产迁移契约；
+- 最终全量测试、交付副本同步和 `18001` 容器验证见本阶段后续记录。
+
+## 2026-09-17：学情报告 PDF 运行时故障修复
+
+### 问题与根因
+
+- 交付副本页面生成报告后出现失败任务。排查确认请求曾进入 Windows 本机 `8000`
+  服务，该进程虽然安装了 WeasyPrint Python 包，但加载 Pango/GLib 原生动态库失败；
+- Windows 本机服务和 Docker 交付服务共用 PostgreSQL，所以本机产生的失败任务也会在
+  `18001` 的报告历史中显示。这不是 MinIO 数据丢失，也不是家长报告权限失效；
+- Docker Linux 镜像包含完整的 WeasyPrint、Pango/Cairo 和中文字体运行环境，报告渲染
+  本身可以正常工作。
+
+### 修复内容
+
+- 新增 PDF 渲染运行时探针，除配置开关外还校验 WeasyPrint 及原生依赖能否完整导入；
+- 依赖健康接口增加 `pdf_renderer` 状态，前端 `pdf_reports` 开关同步受运行能力控制；
+- 家长和教师报告入口在渲染环境不可用时于读取业务数据、创建任务之前返回固定 503，
+  避免继续写入必然失败的任务；
+- 报告执行增加构建 Markdown、渲染 PDF、上传 MinIO、保存产物四个故障阶段的脱敏日志，
+  不记录报告正文、学员标识、对象键和存储凭据；
+- 重新构建并替换交付副本 `18001` 容器，未修改 PostgreSQL、Redis、MinIO、RAGFlow
+  容器和数据卷。
+
+### 验证结果
+
+- 后端全量：`649 passed, 8 skipped, 3 warnings`；
+- Docker Linux 真实 PDF 专项：`24 passed`，覆盖家长报告、教师班级报告、中文字体、
+  WeasyPrint 和 pypdf；
+- `18001` 依赖探针为 `pdf_renderer=ok`，前端能力为 `pdf_reports=true`；
+- 使用家长 P1001 重新生成本月报告，任务状态为 `completed`；经后端鉴权代理下载返回
+  HTTP 200、`application/pdf`、283955 字节，文件头为 `%PDF-`；
+- `git diff --check` 通过。既有失败任务作为真实故障记录保留，没有清理其他业务数据。
+
+## 2026-09-17：招生线索通知闭环最终验收与交付
+
+### 最终验证
+
+- 后端全量：`657 passed, 8 skipped, 7 warnings in 74.12s`；7 条 warning 均来自
+  FastAPI `on_event` 和 Starlette `BlockingPortal` 的弃用提示，不是业务失败；
+- 前端 Vitest：`8 files passed, 30 tests passed`；`vue-tsc --noEmit`、Vite 生产构建和
+  `build:backend` 全部通过；
+- `compileall -q backend scripts tests`、`git diff --check` 通过；生产 Python 文件超过
+  800 行为 0；
+- `009_add_lead_notification_outbox.sql` 已在现有 PostgreSQL 执行成功；迁移前后
+  `enrollment_leads=6`、`lead_follow_ups=2`，没有删除或改写原业务数据，新 Outbox
+  初始记录数为 0。
+
+### 交付约束
+
+- 用户尚未提供真实飞书 Webhook，交付环境保持 `LEAD_NOTIFICATION_ENABLED=false`；
+  依赖探针应显示 `lead_notifications=disabled`，不得伪造通知成功；
+- 交付副本只同步运行所需项目文件，保留其本地 `.env`，排除 Git 元数据、测试、
+  Codex 文件、缓存和临时产物；
+- `upil-deliverable-api` 继续使用现有 `upil_network`、`127.0.0.1:18001` 和
+  `unless-stopped`，不重建 PostgreSQL、Redis、MinIO 或 RAGFlow 等有状态服务。
+
+### 交付运行验收
+
+- 已将运行文件增量同步到 `D:\uPil-deliverable`，保留副本未提交 `.env`，没有同步
+  Git 元数据、项目测试源码、Codex 文件、缓存或临时运行数据；
+- 新镜像为 `upil-deliverable:20260917-notifications`；正式容器保持名称
+  `upil-deliverable-api`、网络 `upil_network`、端口 `127.0.0.1:18001` 和
+  `unless-stopped` 自动恢复策略；旧镜像容器已停止并保留为本机回退备份；
+- 交付接口实测：`/api/v1/health` 返回 `ok`，聊天页返回 HTTP 200；依赖探针中的
+  database、redis、minio、pdf_renderer、ragflow、structured_memory 全部为 `ok`，
+  `lead_notifications=disabled`；
+- 前端启动能力实测 `pdf_reports=true`；家长 P1001 会话返回 chat、learning 和 report
+  三项预期能力；
+- 部署后再次核对 PostgreSQL：`enrollment_leads=6`、`lead_follow_ups=2`、
+  `lead_notification_outbox=0`，确认切换过程没有产生测试线索或通知事件。

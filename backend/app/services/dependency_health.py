@@ -14,20 +14,67 @@ from sqlalchemy import text
 
 from backend.app.config import Settings, get_settings
 from backend.app.db import build_engine
+from backend.app.integrations.ragflow import RagflowClient
+from backend.app.services.report_runtime import report_pdf_runtime_available
 
 
 Probe = Callable[[], bool]
+
+
+def check_ragflow_business_dependencies(
+    settings: Settings | None = None,
+    *,
+    public_probe: Probe | None = None,
+    service_rules_probe: Probe | None = None,
+) -> dict[str, str]:
+    """真实验证两个 RAGFlow 知识域，而不返回问答正文或内部配置。
+
+    普通依赖检查只回答“RAGFlow 网关是否可达”，适合频繁存活监控；本函数
+    会分别发起一条极短只读问题，因此还能覆盖 Assistant 配置、检索索引、
+    Embedding 和回答模型。它仅供显式深度健康接口及发布验收调用，不能放进
+    高频浅探针，以免放大模型费用和冷启动延迟。
+    """
+
+    current = settings or get_settings()
+    if not (
+        current.ragflow_api_key
+        and current.ragflow_public_chat_id
+        and current.ragflow_service_rules_chat_id
+    ):
+        return {
+            "ragflow_public_query": "not_configured",
+            "ragflow_service_rules_query": "not_configured",
+        }
+    return {
+        "ragflow_public_query": _run_probe(
+            public_probe
+            or (
+                lambda: _probe_ragflow_assistant(
+                    current, current.ragflow_public_chat_id, "编程项目实践班主要学什么？"
+                )
+            )
+        ),
+        "ragflow_service_rules_query": _run_probe(
+            service_rules_probe
+            or (
+                lambda: _probe_ragflow_assistant(
+                    current, current.ragflow_service_rules_chat_id, "临时请假应如何办理？"
+                )
+            )
+        ),
+    }
 
 
 def check_dependencies(
     settings: Settings | None = None,
     *,
     database_probe: Probe | None = None,
+    redis_probe: Probe | None = None,
     minio_probe: Probe | None = None,
     ragflow_probe: Probe | None = None,
-    a2a_probe: Probe | None = None,
+    structured_memory_probe: Probe | None = None,
 ) -> dict[str, str]:
-    """检查数据库、MinIO、RAGFlow 和 A2A，并返回脱敏状态字典。
+    """检查数据库、短期会话 Redis、MinIO 和 RAGFlow。
 
     自定义 probe 只用于测试注入；生产调用使用下方的最小真实探针。每个依赖
     独立捕获异常，一个服务失败不会阻止其他依赖继续检查。
@@ -36,11 +83,24 @@ def check_dependencies(
     current = settings or get_settings()
     result = {
         "database": _run_probe(database_probe or (lambda: _probe_database(current))),
+        "redis": _redis_status(current, redis_probe),
         "minio": _minio_status(current, minio_probe),
+        "pdf_renderer": _pdf_renderer_status(current),
         "ragflow": _ragflow_status(current, ragflow_probe),
-        "a2a_learning": _a2a_status(current, a2a_probe),
+        "structured_memory": _structured_memory_status(
+            current, structured_memory_probe
+        ),
+        "lead_notifications": _lead_notification_status(current),
     }
     return result
+
+
+def _pdf_renderer_status(settings: Settings) -> str:
+    """报告关闭时不探测；开启后必须验证 Python 包和原生动态库。"""
+
+    if not settings.report_pdf_enabled:
+        return "disabled"
+    return _run_probe(report_pdf_runtime_available)
 
 
 def overall_status(dependencies: dict[str, str]) -> str:
@@ -68,25 +128,41 @@ def _minio_status(settings: Settings, probe: Probe | None) -> str:
     return _run_probe(probe or (lambda: _probe_minio(settings)))
 
 
-def _ragflow_status(settings: Settings, probe: Probe | None) -> str:
-    """只有 RAGFlow 的 API Key 和至少一个 Chat ID 都配置后才探测。"""
+def _redis_status(settings: Settings, probe: Probe | None) -> str:
+    """只有选择 Redis 会话后端时才探测，响应中不返回连接字符串。"""
 
-    chat_configured = bool(
-        settings.ragflow_public_chat_id
-        or settings.ragflow_service_rules_chat_id
-        or settings.ragflow_chat_id
-    )
-    if not settings.ragflow_api_key or not chat_configured:
+    if settings.conversation_store_backend != "redis":
+        return "disabled"
+    return _run_probe(probe or (lambda: _probe_redis(settings)))
+
+
+def _ragflow_status(settings: Settings, probe: Probe | None) -> str:
+    """只有两个知识域都完整配置后才探测 RAGFlow。"""
+
+    if not (
+        settings.ragflow_api_key
+        and settings.ragflow_public_chat_id
+        and settings.ragflow_service_rules_chat_id
+    ):
         return "not_configured"
     return _run_probe(probe or (lambda: _probe_http(settings.ragflow_base_url, settings)))
 
 
-def _a2a_status(settings: Settings, probe: Probe | None) -> str:
-    """A2A 未显式开启时返回 disabled，不强制要求本机存在子服务。"""
+def _structured_memory_status(settings: Settings, probe: Probe | None) -> str:
+    """检查结构化长期记忆开关和数据库表，不读取任何用户记忆。"""
 
-    if not settings.a2a_learning_enabled:
+    if not settings.memory_write_enabled:
         return "disabled"
-    return _run_probe(probe or (lambda: _probe_http(f"{settings.a2a_learning_base_url}/health", settings)))
+    return _run_probe(probe or (lambda: _probe_structured_memory(settings)))
+
+
+def _lead_notification_status(settings: Settings) -> str:
+    """只检查通知配置是否启用，不向飞书发送探测消息。"""
+
+    if not settings.lead_notification_enabled:
+        return "disabled"
+    # Settings 已验证 URL 结构；健康响应只暴露能力状态，不返回地址。
+    return "configured"
 
 
 def _probe_database(settings: Settings) -> bool:
@@ -96,6 +172,17 @@ def _probe_database(settings: Settings) -> bool:
     with engine.connect() as connection:
         connection.execute(text("SELECT 1"))
     return True
+
+
+def _probe_structured_memory(settings: Settings) -> bool:
+    """只确认长期记忆表存在，避免“数据库通、业务表没迁移”的误报。"""
+
+    engine = build_engine(settings.database_url)
+    with engine.connect() as connection:
+        # 使用 SQLAlchemy inspector 兼容 PostgreSQL 与本地 SQLite 测试。
+        from sqlalchemy import inspect
+
+        return bool(inspect(connection).has_table("agent_structured_memories"))
 
 
 def _probe_minio(settings: Settings) -> bool:
@@ -128,6 +215,20 @@ def _probe_minio(settings: Settings) -> bool:
     return True
 
 
+def _probe_redis(settings: Settings) -> bool:
+    """使用短连接执行只读 Ping，不读取会话 Key，也不输出 Redis URL。"""
+
+    import redis
+
+    client = redis.Redis.from_url(
+        settings.redis_url,
+        socket_timeout=settings.redis_timeout_seconds,
+        socket_connect_timeout=settings.redis_timeout_seconds,
+        decode_responses=True,
+    )
+    return bool(client.ping())
+
+
 def _probe_http(url: str, settings: Settings) -> bool:
     """使用短超时探测 HTTP 服务，只依据状态码判断可达性。"""
 
@@ -138,3 +239,12 @@ def _probe_http(url: str, settings: Settings) -> bool:
     )
     # 4xx 说明服务可达但路径/鉴权不适配；5xx 和网络错误才视为不可用。
     return response.status_code < 500
+
+
+def _probe_ragflow_assistant(
+    settings: Settings, chat_id: str, question: str
+) -> bool:
+    """执行不写业务数据的知识问答，并只判断是否得到非空结果。"""
+
+    result = RagflowClient(settings, chat_id=chat_id).ask_result(question)
+    return bool(result and result.provider == "ragflow" and result.answer.strip())

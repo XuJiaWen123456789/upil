@@ -2,7 +2,7 @@
 
 本模块保留面向业务的摘要接口，并将具体的结构化读取委托给 tools 包。
 这样 LangGraph 节点可以继续使用稳定的旧接口，同时新的工具契约可以被
-API、测试和未来的 A2A 子节点复用。
+API、测试和本地学情分析节点复用。
 """
 
 from sqlalchemy.orm import Session
@@ -44,5 +44,5 @@ def get_learning_snapshot(
 ) -> dict | None:
     """返回经过 Pydantic 契约校验的完整学情快照。"""
 
-    # 该接口面向结构化 API 和未来 A2A 任务，不直接生成自然语言。
+    # 该接口面向结构化 API 和本地学情分析任务，不直接生成自然语言。
     return query_learning_snapshot(session, context, learner_id)

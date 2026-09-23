@@ -1,8 +1,8 @@
-"""MinIO 媒体对象存储适配器。
+"""MinIO 私有报告对象存储适配器。
 
-MinIO 只保存图片、PDF 和其他非结构化文件原件；可检索的标题、替代文本、
-来源和权限信息由 RAGFlow 与 PostgreSQL 分别承担。适配器使用可选 minio
-依赖，未安装依赖时不会影响不使用媒体上传功能的核心 API 启动。
+当前产品只使用 MinIO 保存固定模板学情报告 PDF。数据库继续保存对象键、
+摘要、大小和页数等可查询元数据，下载请求必须先经过后端业务鉴权，不能
+向浏览器暴露存储服务凭据或可长期复用的对象地址。
 """
 
 from __future__ import annotations
@@ -10,24 +10,24 @@ from __future__ import annotations
 import hashlib
 import io
 import re
-import uuid
-from datetime import timedelta
 from typing import Any
 from urllib.parse import quote
 
 from backend.app.config import Settings, get_settings
-from backend.app.schemas import MediaAssetSummary, MediaVisibility
 
 
-# 上传接口只接受明确的图片类型；正式环境还应检查文件魔数，不能只信任请求头。
-ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp", "image/svg+xml"}
+REPORT_PDF_MEDIA_TYPE = "application/pdf"
 
 
 class MinioMediaStore:
-    """使用 S3 兼容的 MinIO 保存和读取媒体对象。"""
+    """使用 S3 兼容的 MinIO 保存和读取私有报告。
+
+    类名为了兼容报告服务和既有测试的稳定导入路径暂不改动；该类已经不再
+    提供图片上传、审核、预签名 URL 等教师媒体工作台能力。
+    """
 
     def __init__(self, settings: Settings | None = None, client: Any | None = None) -> None:
-        """创建存储实例；client 参数用于离线测试注入假的 MinIO 客户端。"""
+        """创建报告存储实例；client 参数供离线测试注入假的 MinIO 客户端。"""
 
         self.settings = settings or get_settings()
         if client is None:
@@ -35,7 +35,7 @@ class MinioMediaStore:
                 from minio import Minio
             except ImportError as exc:
                 raise RuntimeError(
-                    "MinIO 媒体存储需要可选依赖，请执行 uv pip install -e \".[media]\""
+                    "MinIO 报告存储需要可选依赖，请执行 uv pip install -e \".[storage]\""
                 ) from exc
             client = Minio(
                 self.settings.minio_endpoint,
@@ -46,138 +46,106 @@ class MinioMediaStore:
             )
         self.client = client
 
-    def ensure_bucket(self) -> None:
-        """按需创建媒体桶；生产环境也可通过部署脚本预创建并设置最小权限。"""
+    def ensure_report_bucket(self) -> None:
+        """按需创建私有报告桶；生产也可由部署脚本预创建并设置最小权限。"""
 
-        if not self.client.bucket_exists(self.settings.minio_bucket):
-            self.client.make_bucket(self.settings.minio_bucket, location=self.settings.minio_region)
+        if not self.client.bucket_exists(self.settings.report_pdf_bucket):
+            self.client.make_bucket(
+                self.settings.report_pdf_bucket, location=self.settings.minio_region
+            )
 
-    def put_image(
+    def put_report_pdf(
         self,
         content: bytes,
         *,
+        task_id: str,
         filename: str,
-        media_type: str,
-        title: str,
-        alt_text: str,
-        source_document: str,
-        visibility: MediaVisibility = "public_faq",
-        review_status: str = "pending",
-    ) -> MediaAssetSummary:
-        """校验并上传图片，返回可写入 PostgreSQL 的媒体元数据摘要。"""
+        checksum: str,
+    ) -> str:
+        """上传已生成并校验的 PDF，返回仅供数据库保存的私有对象键。
 
-        self._validate_image(content, media_type)
-        # 上传前按需创建私有桶，首次联调无需手工登录 MinIO Console 建桶。
-        self.ensure_bucket()
-        asset_id = uuid.uuid4().hex
+        对象键由安全任务 ID 和内容摘要确定，重试会覆盖同一个对象，不会产生
+        无界孤儿文件。该方法不返回 URL，下载只能通过后端鉴权代理完成。
+        """
+
+        self._validate_report_pdf(content, checksum)
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{2,63}", task_id):
+            raise ValueError("报告任务 ID 不合法")
         safe_name = self._safe_filename(filename)
-        object_key = f"images/{asset_id}/{safe_name}"
-        digest = hashlib.sha256(content).hexdigest()
-        metadata = {
-            # S3 用户元数据最终会进入 HTTP Header；中文必须先编码成 ASCII。
-            "x-amz-meta-title": self._encode_metadata(title[:200]),
-            "x-amz-meta-alt-text": self._encode_metadata(alt_text[:500]),
-            "x-amz-meta-source-document": self._encode_metadata(source_document[:300]),
-            "x-amz-meta-visibility": self._encode_metadata(visibility),
-            "x-amz-meta-review-status": self._encode_metadata(review_status),
-            "x-amz-meta-sha256": digest,
-        }
+        if not safe_name.lower().endswith(".pdf"):
+            raise ValueError("报告文件名必须使用 .pdf 扩展名")
+        self.ensure_report_bucket()
+        object_key = f"reports/{task_id}/{checksum}.pdf"
         self.client.put_object(
-            self.settings.minio_bucket,
+            self.settings.report_pdf_bucket,
             object_key,
             io.BytesIO(content),
             length=len(content),
-            content_type=media_type,
-            metadata=metadata,
+            content_type=REPORT_PDF_MEDIA_TYPE,
+            metadata={
+                "x-amz-meta-sha256": checksum,
+                "x-amz-meta-filename": self._encode_metadata(safe_name),
+            },
         )
-        return MediaAssetSummary(
-            asset_id=asset_id,
-            object_key=object_key,
-            filename=safe_name,
-            media_type=media_type,
-            title=title[:200],
-            alt_text=alt_text[:500],
-            source_document=source_document[:300],
-            visibility=visibility,
-            sha256=digest,
-            size_bytes=len(content),
-            review_status=review_status,
-        )
+        return object_key
 
-    def delete_object(self, object_key: str) -> None:
-        """删除对象，用于数据库写入失败时清理孤儿文件。"""
+    def get_report_pdf(self, object_key: str) -> bytes | None:
+        """从私有报告桶读取 PDF；非法键、对象缺失和故障统一返回 None。"""
 
-        if not object_key.startswith("images/") or ".." in object_key:
-            return
-        self.client.remove_object(self.settings.minio_bucket, object_key)
-
-    def create_presigned_url(self, object_key: str, expires_seconds: int | None = None) -> str:
-        """生成短时访问地址；调用方必须先完成登录态和可见范围校验。"""
-
-        seconds = expires_seconds or self.settings.minio_presigned_url_seconds
-        return self.client.presigned_get_object(
-            self.settings.minio_bucket,
-            object_key,
-            expires=timedelta(seconds=seconds),
-        )
-
-    def get_image(self, object_key: str) -> tuple[bytes, dict[str, Any]] | None:
-        """读取对象内容和 MinIO 元数据；非法键或对象不存在时返回 None。"""
-
-        if not object_key.startswith("images/") or ".." in object_key:
+        if not self._valid_report_object_key(object_key):
             return None
         try:
-            response = self.client.get_object(self.settings.minio_bucket, object_key)
+            response = self.client.get_object(self.settings.report_pdf_bucket, object_key)
             try:
-                return response.read(), dict(getattr(response, "headers", {}) or {})
+                content = response.read(self.settings.report_pdf_max_bytes + 1)
+                return content if isinstance(content, bytes) else bytes(content)
             finally:
                 response.close()
                 response.release_conn()
         except Exception:
-            # 对外隐藏存储服务细节，具体异常应由调用层记录结构化日志。
+            # 调用层只返回固定错误，不向客户端泄漏桶名、对象键或 MinIO 地址。
             return None
 
-    def _validate_image(self, content: bytes, media_type: str) -> None:
-        """执行大小、类型和基础文件签名校验，避免把任意文件写入媒体桶。"""
+    def delete_report_pdf(self, object_key: str) -> None:
+        """仅删除 reports/ 下的报告对象，用于数据库事务失败后的补偿。"""
 
-        if not isinstance(content, bytes) or not content:
-            raise ValueError("图片内容不能为空")
-        if len(content) > self.settings.media_max_bytes:
-            raise ValueError("图片大小超过配置上限")
-        if media_type not in ALLOWED_IMAGE_TYPES:
-            raise ValueError(f"不支持的图片类型：{media_type}")
+        if not self._valid_report_object_key(object_key):
+            return
+        self.client.remove_object(self.settings.report_pdf_bucket, object_key)
 
-        # Content-Type 来自客户端，必须结合文件头校验，避免把脚本或其他文件伪装成图片。
-        signatures = {
-            "image/jpeg": content.startswith(b"\xff\xd8\xff"),
-            "image/png": content.startswith(b"\x89PNG\r\n\x1a\n"),
-            "image/webp": content.startswith(b"RIFF") and content[8:12] == b"WEBP",
-        }
-        if media_type in signatures and not signatures[media_type]:
-            raise ValueError("图片内容与声明类型不匹配")
+    def _validate_report_pdf(self, content: bytes, checksum: str) -> None:
+        """在对象存储边界再次检查 PDF 魔数、大小和调用方摘要。"""
 
-        if media_type == "image/svg+xml":
-            # SVG 可包含脚本和外链资源；当前阶段只接受简单静态 SVG，后续还应接入专业消毒器。
-            try:
-                svg_text = content.decode("utf-8").lower()
-            except UnicodeDecodeError as exc:
-                raise ValueError("SVG 文件必须使用 UTF-8 编码") from exc
-            if "<svg" not in svg_text:
-                raise ValueError("SVG 内容无效")
-            if re.search(r"<script|javascript:|<iframe|<object|<foreignobject|\son[a-z]+\s*=", svg_text):
-                raise ValueError("SVG 包含不允许的脚本或事件属性")
+        if not isinstance(content, bytes) or not content.startswith(b"%PDF-"):
+            raise ValueError("报告内容不是有效 PDF")
+        if len(content) > self.settings.report_pdf_max_bytes:
+            raise ValueError("报告 PDF 大小超过配置上限")
+        digest = hashlib.sha256(content).hexdigest()
+        if not re.fullmatch(r"[0-9a-f]{64}", checksum) or digest != checksum:
+            raise ValueError("报告 PDF 摘要不一致")
+
+    @staticmethod
+    def _valid_report_object_key(object_key: str) -> bool:
+        """报告对象键必须匹配服务端固定结构，拒绝任意键和路径穿越。"""
+
+        return bool(
+            isinstance(object_key, str)
+            and re.fullmatch(
+                r"reports/[A-Za-z0-9][A-Za-z0-9_.:-]{2,63}/[0-9a-f]{64}\.pdf",
+                object_key,
+            )
+        )
 
     @staticmethod
     def _safe_filename(filename: str) -> str:
-        """只保留文件名部分和安全字符，避免用户输入形成路径穿越。"""
+        """只保留文件名和安全字符，防止元数据中携带路径。"""
 
         name = filename.replace("\\", "/").split("/")[-1]
         name = re.sub(r"[^A-Za-z0-9_.\-\u4e00-\u9fff]", "_", name)
-        return name[:180] or "upload.bin"
+        return name[:180] or "learning-report.pdf"
 
     @staticmethod
     def _encode_metadata(value: str) -> str:
-        """将用户元数据编码为可安全放入 HTTP Header 的 ASCII 字符串。"""
+        """将中文元数据编码为可安全放入 HTTP Header 的 ASCII 字符串。"""
 
-        # quote 使用 UTF-8 百分号编码；对象元数据是辅助信息，权威中文原文保存在 PostgreSQL。
         return quote(value, safe="-_.~")

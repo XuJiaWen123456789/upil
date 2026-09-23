@@ -1,7 +1,7 @@
 """家长学情报告的周期解析和脱敏快照服务。
 
 本模块负责把家长消息中的时间表达转换为确定的日期范围，并组合已经授权的
-结构化查询结果。它不调用 LLM、A2A 或 DSH，避免远程节点自行猜测统计边界、
+结构化查询结果。它不调用 LLM 或外部执行服务，避免生成层自行猜测统计边界、
 访问业务数据库或接触姓名和原始学员编号。
 """
 
@@ -13,6 +13,7 @@ from calendar import monthrange
 from datetime import date, datetime, timedelta
 
 from sqlalchemy.orm import Session
+from sqlalchemy import select
 
 from backend.app.learning_contracts import (
     LearningReportPeriod,
@@ -20,6 +21,7 @@ from backend.app.learning_contracts import (
     PublishedProgress,
 )
 from backend.app.services.access_control import AccessContext
+from backend.app.models import ParentLearner
 from backend.app.tools.learning_tools import (
     query_attendance_summary,
     query_learning_progress,
@@ -32,12 +34,43 @@ class ReportPeriodResolutionError(ValueError):
     """用户没有提供可安全解释的报告统计周期。"""
 
 
-def _learner_reference(learner_id: str) -> str:
+def learner_reference(learner_id: str) -> str:
     """将原始学员编号转换为远程任务可使用的不可逆引用。"""
 
-    # 远程 A2A 节点只需要关联同一任务的匿名标识，不需要知道业务库主键。
+    # 报告链路只使用匿名引用关联同一任务，不把业务库主键写入 PDF。
     digest = hashlib.sha256(learner_id.encode("utf-8")).hexdigest()[:24]
     return f"learner_ref_{digest}"
+
+
+def list_bound_learner_references(
+    session: Session, context: AccessContext
+) -> frozenset[str]:
+    """返回当前家长仍然绑定的学员匿名引用集合。
+
+    报告任务不保存原始 learner_id，因此列表、详情和下载只能用同一不可逆
+    算法重新计算当前绑定范围。解绑后旧报告会立即从业务接口失去可见性，
+    同时不会为了授权方便而把学员主键重新写回报告任务。
+    """
+
+    if context.role != "parent":
+        return frozenset()
+    learner_ids = session.scalars(
+        select(ParentLearner.learner_id).where(
+            ParentLearner.parent_id == context.user_id
+        )
+    ).all()
+    return frozenset(learner_reference(value) for value in learner_ids)
+
+
+def can_access_parent_report_scope(
+    session: Session, context: AccessContext, learner_ref: object
+) -> bool:
+    """按当前绑定关系判断家长是否仍可读取某个匿名报告范围。"""
+
+    return (
+        isinstance(learner_ref, str)
+        and learner_ref in list_bound_learner_references(session, context)
+    )
 
 
 def build_learning_report_snapshot(
@@ -51,7 +84,7 @@ def build_learning_report_snapshot(
     """构建指定周期的脱敏学情报告快照。
 
     周期解析、权限检查、出勤率计算和字段脱敏都在主服务完成；该函数不调用
-    LLM、A2A 或 DSH。返回的快照可以安全地交给后续协议层继续校验。
+    LLM 或外部执行服务。返回的快照交给本地模板层继续做字段校验。
 
     None 同时覆盖学员不存在、绑定关系不存在和基础数据缺失，避免调用方
     通过错误差异推断其他学员是否存在。
@@ -97,7 +130,7 @@ def build_learning_report_snapshot(
     # 出勤率已由 query_attendance_summary 根据数据库记录确定性计算；这里再次使用
     # 该契约值，不允许自然语言模型或远程执行节点重新推算统计数字。
     return LearningReportSnapshot(
-        learner_ref=_learner_reference(learner_id),
+        learner_ref=learner_reference(learner_id),
         period=period,
         course_summaries=course_summaries,
         scheduled_sessions=attendance.total_lessons,

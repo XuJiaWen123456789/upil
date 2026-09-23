@@ -6,19 +6,19 @@
 
 ## 环境边界
 
-- dev：SQLite、离线 FAQ、A2A 关闭，适合快速开发；
+- dev：SQLite 和离线 FAQ，适合快速开发；
 - test：pytest 和依赖注入 Mock，不要求 Docker；
-- staging：计划使用 PostgreSQL、MinIO、RAGFlow 和独立 A2A 服务；
+- staging：计划使用 PostgreSQL、MinIO、RAGFlow 和单一 uPil API 服务；
 - 所有学员、课程、班级和学情内容仍是虚构演示数据。
 
 ## 配置原则
 
 1. 复制 .env.staging.example 为未提交的 .env.staging；
-2. 使用真正的随机数据库密码、MinIO 密钥和内部 A2A Token；
+2. 使用真正的随机数据库密码和 MinIO 密钥；
 3. 不把 .env.staging、API Key、密码和 Token 写入日志；
-4. 不把 Docker Socket 挂载给 uPil 或 DSH；
+4. 不把 Docker Socket 挂载给 uPil；
 5. 先启动依赖，再通过 GET /api/v1/health/dependencies 验证；
-6. RAGFlow、模型和 A2A 均可选，故障时主 API 应保持可响应并明确降级。
+6. RAGFlow 和模型均可选，故障时主 API 应保持可响应并明确降级。
 
 ## 健康检查
 

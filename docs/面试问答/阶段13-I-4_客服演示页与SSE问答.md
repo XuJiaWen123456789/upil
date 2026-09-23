@@ -1,5 +1,7 @@
 # 阶段 13-I-4：客服演示页与 SSE 可观测性问答
 
+> 历史状态：本文件记录阶段 13 的 A2A/DSH 协议实验。当前生产代码、配置和部署已经移除 A2A/DSH，现行方案见 `docs/技术方案/项目收尾_移除A2A与统一学情分析Agent.md`。
+
 ## Q1【高频】为什么不用原生 EventSource？
 
 答：原生 EventSource 主要支持 GET，而本项目需要 POST 提交 JSON 请求体，所以采用 fetch 加 response.body.getReader() 消费 SSE。这样既保留 SSE 的服务端单向推送能力，也支持会话 ID、调试字段和请求取消。

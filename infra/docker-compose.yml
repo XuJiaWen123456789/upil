@@ -30,10 +30,10 @@ services:
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
     command: server /data --console-address ":9001"
     ports:
-      # 9000 与 9001 位于当前 Windows 的系统保留端口范围，使用 19000 提供本机 API。
-      - "19000:9000"
-      # Windows 主机的 9001 位于系统保留端口范围，使用 19001 作为本机控制台端口。
-      - "19001:9001"
+      # Windows/Hyper-V 会动态保留部分 18xxx-19xxx 端口；使用 29xxx 避免容器重启后绑定失败。
+      - "29000:9000"
+      # MinIO 控制台与 API 分开暴露，便于本机调试和对象检查。
+      - "29001:9001"
     volumes:
       - minio_data:/data
     healthcheck:
@@ -44,11 +44,43 @@ services:
     networks:
       - upil
 
+  # uPil 的短期会话使用独立 Redis，不复用 RAGFlow 内部的 Redis/Valkey。
+  # 两者拆开后，知识库升级、清理缓存或调整淘汰策略不会误伤客服会话。
+  upil-redis:
+    image: redis:7.4-alpine
+    container_name: upil-redis
+    restart: unless-stopped
+    environment:
+      # 密码来自未提交的根目录 .env；REDISCLI_AUTH 只供容器内健康检查使用，
+      # 健康检查和脚本都不会把凭据拼进命令输出。
+      UPIL_REDIS_PASSWORD: ${UPIL_REDIS_PASSWORD:?请在未提交的根目录 .env 中配置 UPIL_REDIS_PASSWORD}
+      REDISCLI_AUTH: ${UPIL_REDIS_PASSWORD:?请在未提交的根目录 .env 中配置 UPIL_REDIS_PASSWORD}
+    command:
+      - sh
+      - -c
+      - exec redis-server --appendonly yes --appendfsync everysec --requirepass "$$UPIL_REDIS_PASSWORD"
+    ports:
+      # 16379 已被 RAGFlow 使用；uPil 会话 Redis 单独映射到 16380。
+      - "127.0.0.1:16380:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      # redis-cli 自动读取 REDISCLI_AUTH；输出中不会出现密码。
+      test: ["CMD-SHELL", "redis-cli ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 3s
+    networks:
+      - upil
+
 volumes:
   postgres_data:
     name: upil_postgres_data
   minio_data:
     name: upil_minio_data
+  redis_data:
+    name: upil_redis_data
 
 networks:
   upil:

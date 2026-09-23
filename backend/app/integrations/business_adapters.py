@@ -106,8 +106,9 @@ class BusinessSystemsAdapter(Protocol):
 class FakeBusinessSystemsAdapter:
     """用于本地测试的确定性业务系统适配器。
 
-    Fake Adapter 的返回数据明确标记为演示结果，不能用于生产。它支持人为
-    注入超时和不可用状态，用来验证工作流在第三方故障时不会编造业务事实。
+    Fake Adapter 的返回数据只用于本地数据适配和自动化验证，不代表外部业务系统
+    的实时数据。它支持人为注入超时和不可用状态，用来验证工作流在第三方故障时
+    不会编造业务事实。
     """
 
     def __init__(
@@ -118,7 +119,7 @@ class FakeBusinessSystemsAdapter:
         timeout_operations: set[str] | None = None,
         unavailable_operations: set[str] | None = None,
     ) -> None:
-        # 默认数据只服务于自动化测试和本地演示，不代表任何真实机构信息。
+        # 默认数据只服务于自动化测试和本地联调，不代表任何真实机构信息。
         self._availability = dict(availability or {})
         self._orders = dict(orders or {})
         self._timeout_operations = set(timeout_operations or set())
@@ -146,7 +147,7 @@ class FakeBusinessSystemsAdapter:
     def query_class_availability(
         self, query: ClassAvailabilityQuery
     ) -> ClassAvailabilityData:
-        """返回显式配置的演示班级名额；未配置时认为没有可信结果。"""
+        """返回显式配置的班级名额；未配置时认为没有可信结果。"""
 
         self._check_operation("class_availability")
         course_key = query.course_id or query.course_name or ""
@@ -163,7 +164,7 @@ class FakeBusinessSystemsAdapter:
         return result
 
     def query_order_status(self, query: OrderStatusQuery) -> OrderStatusData:
-        """返回显式配置的演示订单状态，不生成退款金额。"""
+        """返回显式配置的订单状态，不生成退款金额。"""
 
         self._check_operation("order_status")
         result = self._orders.get(query.order_id)

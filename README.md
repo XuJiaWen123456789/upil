@@ -1,226 +1,509 @@
 # uPil
 
-uPil 是面向素质教育机构的智能客服与课时学情助手。本仓库当前已完成阶段 14-B 的统一认证与授权边界，包含可运行的后端骨架、LangGraph 路由、结构化学情工具、数据库查询链路、MinIO 媒体接口、RAGFlow 适配器，以及独立本地 HTTP A2A 学情分析子服务。
+uPil 是一个面向素质教育机构的多 Agent 智能客服与学情服务项目。系统围绕家长咨询、课程规则问答、学情查询、家长与教师报告、试听报名线索跟进等真实业务场景构建，并通过统一身份上下文、确定性业务工具和权限校验控制模型的能力边界。
 
-## 当前阶段
+本仓库是个人求职项目的运行交付副本，提供前后端及基础设施；按交付范围不包含自动化测试源码。它不宣称已经接入真实教育机构数据、正式身份提供方、CRM、电话、短信或支付系统。
 
-- FastAPI 健康检查接口
-- POST + SSE 对话接口
-- LangGraph Supervisor 风格的最小意图路由
-- FAQ、学情摘要、人工转接三个演示节点
-- SQLite/PostgreSQL 可切换的 SQLAlchemy 数据层
-- 家长、教师和管理员的基础学员访问控制
-- HTTP 入口支持 `demo` 与 `trusted_headers` 两种认证模式；业务接口和 LangGraph
-  统一消费服务端生成的 `AccessContext`，可信模式忽略客户端提交的模拟身份
-- 学情摘要从数据库统计课时、消课和出勤
-- 学情分析白名单工具：学员资料、出勤统计、课时账户和阶段进度
-- 结构化学情快照接口，可供后续 A2A Task 封装
-- FAQ 服务支持 RAGFlow、LangChain 和离线回退三种运行模式
-- RAGFlow v0.27.1 本地 Docker 服务已完成健康检查，FAQ 适配器使用推荐 OpenAI 兼容接口并保留来源引用
-- FAQ 知识资源支持 Markdown 图片、表格和图片替代文本；图片和文档原文件统一存入 MinIO
-- MinIO 图片上传、审核、权限校验和短时预签名 URL 接口
-- 通用意图与实体契约、课程名称标准化、课程纠正覆盖和检索查询改写基础模块
-- 供应商无关的结构化意图识别适配器，支持 Pydantic 严格校验、课程白名单、
-  高风险确定性守卫、模型异常回退和识别来源诊断
-- DeepSeek deepseek-chat 真实模型意图评估已完成，固定用例结果为 8/8；
-  结构化识别、查询改写和安全路由已接入 LangGraph/SSE 在线链路
-- 可选 `conversation_id` 支持最近课程实体、课程纠正和后续指代；开发期
-  状态使用带 TTL/容量限制的进程内 Store，生产需替换为 Redis/PostgreSQL
-- A2A 学情分析支持默认关闭的 `mock` 与 `local_http` 两种模式；HTTP 模式已完成
-  本地跨进程联调、服务令牌校验、协议版本校验、有限超时重试、任务幂等、状态查询、
-  脱敏指标和数据库降级
-- 客服演示页已由 FastAPI 直接托管，支持 POST + SSE 增量输出、会话切换、快捷问题、
-  A2A 任务状态、请求观测指标、真实引用调试展示和 AbortController 请求取消
-- DSH 执行器当前仅完成受控门禁和默认关闭适配器；只允许学情分析技能，未接入真实
-  DeepSeekHarness，也不执行用户提交的代码
+## 核心能力
 
-当前开发机已通过本地 `.env` 配置 DeepSeek，仅用于显式真实评估和本地
-在线链路；密钥未写入源码或 `.env.example`。RAGFlow Dataset 已完成解析与
-元数据验证，FAQ 在线调用取决于有效的 RAGFlow Chat ID。当前客服演示页已经实现，
-但仍属于本地 staging 展示层；仓库尚未提供面向最终用户的登录页面、OIDC
-身份提供方、认证代理和完整运营后台。
-PostgreSQL 连接配置已经准备好，本地测试默认使用注入的 SQLite 内存数据库。
+- **多 Agent 对话编排**：Supervisor 负责意图规划和状态仲裁，FAQ、服务规则、统一学情分析、人工转接等节点只处理各自职责。
+- **结构化意图识别**：使用 Pydantic 校验模型输出，并结合确定性守卫、模型失败回退、槽位确认和 pending flow 防止错误路由。
+- **多轮上下文治理**：支持课程指代消解、用户纠错、话题恢复、显式取消、槽位补全和会话摘要。
+- **受控长期记忆**：仅保存课程兴趣、上课时间偏好和孩子昵称等低敏感稳定信息，新会话可以按可信用户身份继承。
+- **RAGFlow 知识问答**：公开课程咨询和服务规则使用独立知识域，支持来源引用、混合检索及不可用时的受控降级。
+- **确定性学情查询**：出勤、课时、学习进度和班级统计由数据库与业务工具计算，LLM 只负责理解、归纳和表达。
+- **学情报告闭环**：家长和教师可通过聊天或页面入口生成报告，系统完成统计、PDF 生成、MinIO 私有存储和下载时重新鉴权。
+- **试听报名线索闭环**：主业务回答与报课意向分析并行运行，高意向时主动征得联系方式授权，并将线索交给具有最小权限的销售顾问老师跟进。
+- **多角色工作台**：Vue 前端按家长、任课教师和销售顾问老师的能力动态展示页面与操作。
 
-## 项目过程文档
+## 技术栈
 
-- D:/uPil/docs/PROJECT_LOG.md：按阶段记录完成内容、问题、解决方案和验证结果。
-- D:/uPil/docs/TECH_DECISIONS.md：记录 MinIO、PostgreSQL、RAGFlow、向量检索和 A2A 的技术决策。
-- D:/uPil/docs/DEFENSE_INTERVIEW_QA.md：整理多智能体、A2A、RAGFlow、MinIO、SSE 和数据安全等答辩与面试问答。
+| 层次 | 技术 | 用途 |
+| --- | --- | --- |
+| 后端 | Python 3.11、FastAPI、SQLAlchemy | API、SSE、业务服务与持久化 |
+| Agent | LangChain 1.x、LangGraph 1.x、Pydantic | 模型适配、工作流编排和结构化输出 |
+| 前端 | Vue 3、TypeScript、Vite、Vue Router、Pinia | 多角色业务工作台 |
+| 业务数据库 | PostgreSQL | 用户、学员、课程、会话目录、报告、线索和长期偏好 |
+| 短期状态 | Redis | 会话窗口、滚动摘要、确认槽位和 pending 状态 |
+| 对象存储 | MinIO | 私有保存学情报告 PDF |
+| 知识库 | RAGFlow | 文档解析、切片、检索和来源引用 |
+| PDF | markdown-it-py、WeasyPrint、pypdf | 受控 Markdown 渲染、PDF 生成与交付前校验 |
+| 测试 | pytest、Vitest、vue-tsc | 后端、前端、类型和构建验证 |
 
-阶段 13-H 的 staging 编排文件位于 D:/uPil/infra/staging。它使用 Python 3.11、
-非 root 用户和独立 Docker 网络，将 API 与 A2A 子服务放入可复现的本地预发布环境。
-启动前请将 .env.staging.example 复制为 .env.staging 并填写本机依赖凭据；
-.env.staging 已被 Git 忽略，不能提交真实密钥。
+## 系统架构
 
-```powershell
-Set-Location D:/uPil
-docker compose --env-file ./infra/staging/.env.staging `
-  -f ./infra/staging/docker-compose.staging.yml up -d --build
-docker compose --env-file ./infra/staging/.env.staging `
-  -f ./infra/staging/docker-compose.staging.yml ps
-curl.exe -sS http://127.0.0.1:18000/api/v1/health
-curl.exe -sS http://127.0.0.1:18000/api/v1/health/dependencies
+```text
+浏览器 / Vue 3
+       |  REST + SSE
+       v
+FastAPI API
+       |
+       +-- 身份认证与 AccessContext
+       +-- 会话目录、报告、线索等业务 API
+       +-- LangGraph 对话工作流
+       |      |
+       |      +-- Supervisor / 意图仲裁
+       |      +-- FAQ Agent ---------> RAGFlow 公开咨询知识域
+       |      +-- 服务规则 Agent ----> RAGFlow 服务规则知识域
+       |      +-- 统一学情分析 Agent -> SQLAlchemy 业务工具
+       |      +-- 人工转接、澄清、闲聊和越界节点
+       |      +-- 报课意向 Agent（旁路分析）
+       |
+       +-- PostgreSQL：业务数据、会话历史、长期偏好、报告和线索
+       +-- Redis：短期会话状态
+       +-- MinIO：私有 PDF 对象
 ```
 
-健康检查中 ok 表示探针成功，not_configured 表示可选能力尚未注入配置，
-degraded 表示至少一个已启用依赖异常。当前 staging 的 A2A 是本地受控 Mock
-学情分析子服务，不代表已接入真实 DeepSeekHarness 或真实教育机构生产数据。
+多 Agent 在本项目中表示**职责、上下文和工具权限的隔离**，不表示每个 Agent 都是独立进程或远程服务。需要共享业务能力的节点通过受控 Service 和 Tool 复用实现，而不是复制一套逻辑。
 
-第 3 阶段本轮已完成外部能力适配层，但没有伪造在线服务已连接。只有设置完整的
-LLM 或 RAGFlow 配置后，FAQ 才会访问对应服务；未配置时会稳定回退到离线回答。
+当前运行链路已经移除 A2A/DSH。相关文档仅保留为历史技术探索和取舍记录，不是当前部署依赖。
 
-本地持久化联调可使用 SQLite 文件库。初始化后数据库文件位于 D:/uPil/data/upil.db，
-可供本地数据工具读取；该文件只包含演示数据，不应作为生产数据库使用。
+## Agent 工作流
 
-## FAQ 知识资源与图片
+当前对话图定义在 `backend/app/workflows/conversation/`，主要节点如下。
 
-演示知识库位于 D:/uPil/knowledge_base，其中包含校区、课程、收费、请假补课、装备和活动服务等 FAQ 文档。
-复杂资料示例位于 D:/uPil/knowledge_base/demo_institution/01_institution/教师与校区环境.md，展示了教师介绍表格、校区环境图和周末课程安排图。
-当前图片是虚构 SVG 演示素材，正式环境需要替换为已授权并审核通过的图片。
+| 节点 | 职责 | 主要数据来源 |
+| --- | --- | --- |
+| Supervisor | 识别主意图、旁路意图、实体和槽位，仲裁 pending flow | 当前消息、受控上下文、Router 模型 |
+| FAQ Agent | 回答课程、适龄、装备、校区和活动等公开问题 | RAGFlow 公开咨询知识域 |
+| 服务规则 Agent | 回答请假、调课、补课等规则问题 | RAGFlow 服务规则知识域 |
+| 统一学情分析 Agent | 处理个人学情、家长报告和教师班级报告 | 权限校验后的数据库工具 |
+| 报告历史节点 | 查询当前身份有权访问的报告记录 | PostgreSQL |
+| 人工转接节点 | 对需要人工确认的事项给出受控转接说明 | 当前会话状态 |
+| 槽位澄清节点 | 只追问完成当前任务所缺少的信息 | 已确认槽位与 pending 状态 |
+| 闲聊节点 | 处理问候、结束和礼貌表达 | 当前消息 |
+| 超出范围节点 | 拒绝与教育咨询无关的请求 | 意图决策 |
+| 报课意向 Agent | 与主回答并行识别试听、报名和顾问联系意图 | 脱敏后的受控上下文 |
 
-图片和文档原文件使用 MinIO 对象存储，安装媒体依赖并配置 MinIO 后可使用：
+报课意向 Agent 不直接替代主业务回复。FAQ 或规则节点继续回答用户问题，旁路分析只更新线索状态；只有满足高意向规则时，系统才附加联系方式授权询问。
 
-uv pip install -e ".[media]"
+## 意图识别与仲裁
 
-$env:MINIO_ENDPOINT = "localhost:19000"
-$env:MINIO_ACCESS_KEY = "minioadmin"
-$env:MINIO_SECRET_KEY = "minioadmin"
-$env:MINIO_BUCKET = "upil-media"
-$env:MINIO_SECURE = "false"
+Supervisor 不是单纯依赖一个分类 Prompt，而是组合以下机制：
 
-RAGFlow 保存文档正文、表格、OCR 文本和图片说明；MinIO 保存图片和文档原文件，PostgreSQL 保存媒体元数据及对象键。uPil 在认证和权限校验通过后生成短时预签名 URL。SSE 只返回 media_asset_id 等脱敏引用，不返回二进制内容。真实环境还必须补充恶意文件扫描、专业 SVG 消毒、内容审核和对象生命周期治理。
+1. Router 模型输出强结构化结果，使用 Pydantic 校验；Router 可单独配置模型，并固定 `temperature=0`。
+2. 课程名称、角色、报告动作和服务规则等高风险实体经过白名单和确定性规则复核。
+3. 模型失败、超时或输出不合法时进入确定性回退，不把异常直接暴露给用户。
+4. 用户原话提供的槽位标记为已确认；模型推断值不能直接驱动学情报告等高风险工具。
+5. 课程纠错会覆盖旧实体，指代消解优先使用最近已确认主题，pending 任务不能劫持无关的新问题。
+6. `UNKNOWN` 区分“信息不足”和“超出业务范围”，前者澄清，后者拒绝，不统一丢给 FAQ。
 
-媒体接口：
+当前仲裁优先级为：
 
-- POST /api/v1/media/images：教师或管理员上传图片，素材默认进入 pending 审核状态。
-- POST /api/v1/media/{asset_id}/review：管理员将素材标记为 approved 或 rejected。
-- GET /api/v1/media/{asset_id}/url：审核通过且当前角色有权限时生成 600 秒预签名 URL。
+```text
+显式取消或安全边界
+  > 与当前 pending 兼容的槽位补全
+  > 本轮主意图
+  > 旁路能力
+  > UNKNOWN 处理
+```
 
-上传接口会校验文件大小、Content-Type、PNG/JPEG/WebP 文件签名和基础 SVG 安全规则。对象元数据中的中文会进行 UTF-8 百分号编码，业务数据库仍保存完整中文字段。
+决策链日志只记录脱敏原因码和必要诊断信息，不记录完整手机号、邮箱、Token 或原始敏感消息。
 
-## 认证与授权
+## 上下文与记忆
 
-`AUTH_MODE=demo` 只用于本地开发和自动化测试。在该模式下，请求中的
-`actor_role` 和 `actor_user_id` 保留为模拟身份参数，以兼容本地客服页面和既有测试。
-该模式不得用于公网或正式环境。
+项目没有把全部聊天记录无限塞入 Prompt，也没有把所有对话无差别写入向量数据库。当前采用分层、受控的上下文与记忆方案。
 
-`AUTH_MODE=trusted_headers` 用于部署在认证代理之后的 API。代理完成登录后注入
-`X-Authenticated-User-ID`、`X-Authenticated-Role` 和内部共享密钥；uPil 先以
-常量时间比较校验代理密钥，再回查用户数据库，并仅从数据库读取角色与校区范围。
-在此模式下，请求体、查询参数和表单中的模拟身份会被完全忽略。
+### 当前请求上下文
 
-认证解决“当前用户是谁”，`backend/app/services/access_control.py` 继续解决“该用户
-可以访问哪些学员、班级和媒体”。认证成功不等于拥有业务资源权限，LangGraph 也不
-自行解析凭据，只接收 HTTP 边界生成的 `AccessContext`。
+`ContextEnvelope` 是服务端构造的不可变上下文投影，包含可信身份、角色、会话编号、确认槽位和允许暴露的业务信息。Agent 只能读取完成当前职责所需的字段，不能自行声明用户身份或扩大数据范围。
 
-可信 Header 不是直接面向互联网的登录方案。正式部署必须满足以下条件：
+### 短期会话记忆
 
-- 由 OIDC/OAuth2/SSO 网关或其他可信认证代理完成用户登录；
-- 代理先删除外部请求中的同名身份 Header，再写入经过认证的身份；
-- uPil API 只允许代理所在网络访问，并全链路启用 TLS，条件允许时使用 mTLS；
-- `AUTH_TRUSTED_PROXY_SECRET` 通过 Secret Manager 或部署平台密钥注入并定期轮换；
-- 生产环境必须显式设置 `AUTH_MODE=trusted_headers`，身份库故障时失败关闭；
-- 后续可用 OIDC/JWT 校验适配器替换可信 Header 适配层，业务授权层无需改写。
+Redis 按租户、用户和会话作用域保存：
 
-生产变量模板位于 `D:/uPil/infra/production/.env.production.example`。模板强制使用
-`trusted_headers`，但故意保留共享密钥及外部服务凭据为空，不能直接作为部署密钥。
+- 最近若干轮脱敏对话；
+- 滚动摘要；
+- 已确认课程、年龄、基础和时间偏好等槽位；
+- pending flow 及其状态；
+- TTL 和容量限制。
 
-## 本地运行
+提示词输入由“结构化槽位 + 最近原始轮次 + 历史摘要”组成，并受 Token 预算控制。Redis 是 uPil 独立实例，不复用 RAGFlow 内部的 Redis/Valkey。
 
+### 会话历史
+
+PostgreSQL 保存会话目录和脱敏后的消息历史，用于侧边栏的新建、继续、重命名、删除和恢复。会话访问始终按可信用户身份隔离。
+
+### 长期偏好
+
+长期记忆当前只允许以下低敏感、相对稳定的结构化类型：
+
+- `course_interest`：课程兴趣；
+- `class_time_preference`：上课时间偏好；
+- `child_nickname`：孩子昵称。
+
+用户明确说“请记住”时可触发写入；高置信度的稳定陈述也可在受控规则下保守写入。相同用户更换 `conversation_id` 后仍可读取这些偏好。手机号、邮箱、密码、Token、银行卡、实时名额、动态课时、出勤和报告状态不会作为长期偏好保存。
+
+当前实现采用自定义 Redis 会话状态和 PostgreSQL 结构化长期记忆，并非 LangGraph Checkpointer/Store。情景向量记忆默认关闭（`EPISODIC_MEMORY_ENABLED=false`），因此 README 不把尚未评测的向量召回写成已上线能力。
+
+## RAGFlow 检索链路
+
+RAGFlow 负责知识文档的 PDF/Markdown 解析、OCR、表格处理、切片、向量或混合检索和来源引用；uPil 负责意图路由、身份权限、会话状态、SSE、业务统计、报告和线索。两者的职责边界保持分离。
+
+```text
+用户问题
+  -> Supervisor 判断 FAQ 或服务规则
+  -> 查询改写与课程实体标准化
+  -> 调用对应的 RAGFlow Chat Assistant
+  -> 解析答案和来源引用
+  -> 安全过滤与业务边界补充
+  -> SSE 返回前端
+```
+
+公开 FAQ 与服务规则使用两个独立 Chat Assistant，避免知识域相互污染。本地 RAGFlow 可使用 Ollama `bge-m3:latest` 作为 Embedding 模型；具体部署和知识库初始化见 [infra/ragflow/README.md](infra/ragflow/README.md)。
+
+## 学情与报告
+
+### 确定性学情统计
+
+个人与班级学情由后端查询数据库并计算，包含课时、出勤、阶段进度、完课率、缺勤情况和数据缺失提示。LLM 不负责编造统计值，只在经过授权的统计快照上生成自然语言归纳。
+
+### 报告生成与下载
+
+家长可生成绑定孩子的学情报告，教师可生成自己实际授课且属于本人校区范围内的班级报告。报告周期支持自然语言表达；未指定时默认最近 30 天。
+
+```text
+生成请求
+  -> 身份、学员或班级归属校验
+  -> 相同范围与周期的幂等检查
+  -> 数据库确定性统计
+  -> 固定模板 Markdown（仅内存中间态）
+  -> markdown-it-py 白名单渲染
+  -> WeasyPrint 生成 PDF
+  -> pypdf 检查页数、模板文字和敏感信息泄漏
+  -> MinIO 私有桶保存
+  -> PostgreSQL 保存任务和 Artifact 元数据
+```
+
+新任务只生成一个 PDF Artifact，不生成 CSV 双产物。下载由后端重新校验当前用户权限后代理返回，不向浏览器暴露 MinIO 对象键、内部地址、访问密钥或预签名 URL。系统仍兼容读取早期家长 Markdown Artifact，但不会为新任务继续创建它。
+
+## 报课意向与销售跟进
+
+线索流程保持在聊天主体验中，不要求家长进入后台表单：
+
+1. 主 Agent 正常回答课程问题，报课意向 Agent 在旁路读取同一轮脱敏上下文。
+2. 系统结合模型证据和确定性规则判断意向强度。
+3. 明确提出试听、报名或要求顾问联系视为高意向。
+4. 如果没有联系方式，系统主动询问用户是否愿意提供并同意销售顾问老师联系。
+5. 只有用户主动提供联系方式且在同一轮明确授权，系统才保存密文、检索指纹和掩码。
+6. 具有 `lead_followup` 权限的销售顾问老师可领取线索、按需查看联系方式并记录跟进。
+
+联系方式会在进入 LLM 和 RAGFlow 前脱敏。销售顾问老师复用 `teacher` 认证角色，但只按能力点开放线索工作台；销售顾问不显示教师班级统计页面。项目不提供运营角色、转化漏斗、综合 CRM、外呼、短信或支付集成。
+
+## 身份、权限与隔离
+
+后端支持三种认证模式：
+
+| 模式 | 用途 | 说明 |
+| --- | --- | --- |
+| `demo` | 本地开发与自动化测试 | 允许使用数据库中的演示身份，不可作为生产认证 |
+| `trusted_headers` | 可信认证网关后方部署 | 仅接受带共享代理密钥的身份 Header |
+| `oidc_jwt` | OIDC Resource Server | 验证非对称 JWT、issuer、audience、有效期和 JWKS |
+
+OIDC 外部身份通过 `(issuer, subject)` 映射到本地用户；角色、账号状态、校区和能力点始终以本地数据库为准，不能由 Token 或客户端任意覆盖。仓库实现了 Resource Server 侧能力，但没有部署真实 Keycloak、Auth0 或机构 IdP。
+
+核心授权规则：
+
+- 家长只能访问本人绑定的孩子、报告和会话；
+- 教师只能访问自己实际授课且处于本人校区范围内的班级和学员；
+- 销售顾问老师必须具有 `lead_followup` 权限才能访问线索；
+- 报告的生成、列表、详情和下载均重新执行资源归属校验；
+- Redis 和 PostgreSQL 的会话、偏好按租户、用户、角色及必要的学员作用域隔离；
+- 客户端提交的模拟身份在 `trusted_headers` 和 `oidc_jwt` 模式下会被忽略。
+
+当前业务用户模型只有 `parent` 和 `teacher`，没有管理员或运营业务角色。
+
+## 前端页面
+
+| 路由 | 页面 | 访问条件 |
+| --- | --- | --- |
+| `/chat` | 多轮咨询、会话历史和报告入口 | `chat_access` |
+| `/parent/learning` | 家长实时学情 | 家长 + `learning_read` |
+| `/parent/reports` | 学生学情报告列表 | 家长 + `report_read` |
+| `/parent/reports/:taskId` | 学生学情报告详情 | 家长 + `report_read` |
+| `/teacher/classes` | 教师班级学情 | 教师 + `class_summary_read` |
+| `/teacher/reports/:taskId` | 班级报告详情 | 教师 + `class_summary_read` |
+| `/teacher/leads` | 销售线索工作台 | 教师 + `lead_followup` |
+
+Vue 3 + TypeScript + Vite 用于承载多角色导航、SSE、会话历史、报告详情和线索工作台。Chainlit 或 Streamlit 更适合快速原型，不适合当前细粒度权限、复杂页面路由和文件交付需求。生产构建由 FastAPI 同源托管，减少跨域和重复认证配置。
+
+## 项目目录
+
+```text
+uPil/
+├─ backend/app/
+│  ├─ agents/          # 各业务 Agent 及单职责处理器
+│  ├─ api/             # FastAPI 路由、依赖和响应边界
+│  ├─ configuration/   # 配置模型、弃用项检查和配置审计
+│  ├─ connectors/      # RAGFlow、模型和外部边界适配器
+│  ├─ context/         # ContextEnvelope 与可信上下文构造
+│  ├─ conversations/   # 会话目录和消息历史
+│  ├─ dialogue/        # 意图、槽位、课程实体和状态仲裁
+│  ├─ integrations/    # 数据库、Redis、MinIO 等集成
+│  ├─ memory/          # 结构化长期记忆及写入策略
+│  ├─ observability/   # 脱敏日志和运行观测
+│  ├─ prompts/         # Prompt 常量和装配逻辑
+│  ├─ services/        # 报告、线索、认证等业务服务
+│  ├─ tools/           # Agent 可调用的受控业务工具
+│  └─ workflows/       # LangGraph 状态、节点、路由和图构建
+├─ frontend/           # Vue 3 多角色前端
+├─ infra/              # uPil、RAGFlow 和 staging 编排
+├─ knowledge_base/     # 知识库源文件与构建资源
+├─ scripts/            # 初始化、审计、评测和构建脚本
+└─ docs/               # 技术方案、日志、测评集和面试问答
+```
+
+生产 Python 代码按 Agent、API、Workflow、Service、Tool、Connector 和 Prompt 分层，当前没有超过 800 行的生产 Python 文件。测试文件不参与该限制。
+
+## 主要 API
+
+### 健康、会话与聊天
+
+```text
+GET    /api/v1/health
+GET    /api/v1/health/dependencies
+GET    /api/v1/health/dependencies/deep
+GET    /api/v1/frontend/bootstrap
+GET    /api/v1/session
+POST   /api/v1/chat/stream
+
+POST   /api/v1/conversations
+GET    /api/v1/conversations
+GET    /api/v1/conversations/{conversation_id}/messages
+PATCH  /api/v1/conversations/{conversation_id}
+DELETE /api/v1/conversations/{conversation_id}
+```
+
+### 学情与报告
+
+```text
+GET    /api/v1/learners/{learner_id}/learning-snapshot
+GET    /api/v1/classes/{class_id}/learning-summary
+
+POST   /api/v1/learners/{learner_id}/reports
+POST   /api/v1/classes/{class_id}/reports
+GET    /api/v1/classes/{class_id}/reports
+GET    /api/v1/reports
+GET    /api/v1/reports/{task_id}
+GET    /api/v1/reports/{task_id}/download
+```
+
+### 销售线索
+
+```text
+GET    /api/v1/leads
+GET    /api/v1/leads/{lead_id}
+GET    /api/v1/leads/{lead_id}/contact
+POST   /api/v1/leads/{lead_id}/follow-ups
+```
+
+`POST /api/v1/internal/demo/class-availability` 只供开发环境演示数据使用，不是生产业务接口。
+
+## 本地启动
+
+以下命令以 Windows PowerShell 和项目目录 `D:\uPil` 为例。
+
+### 1. 安装后端依赖
+
+```powershell
+Set-Location D:\uPil
 uv venv --python 3.11 .venv
-.\\.venv\\Scripts\\Activate.ps1
-uv pip install -e ".[dev]"
-uvicorn backend.app.main:app --reload --port 8000
+.\.venv\Scripts\Activate.ps1
+uv pip install -e ".[dev,memory,llm,storage]"
+Copy-Item .env.example .env
+```
 
-需要使用 LangChain 的 OpenAI 兼容模型时，可额外安装可选依赖：
+复制配置后，至少应修改 `.env` 中的 Redis 密码。需要真实模型、RAGFlow 或 PDF 下载时，再填写对应密钥和开关；不要把本地 `.env` 提交到 Git。
 
-uv pip install -e ".[llm]"
+### 2. 启动 uPil 基础设施
 
-初始化本地 SQLite 文件库：
+```powershell
+docker compose --env-file .env -f infra/docker-compose.yml up -d
+```
 
-python -m scripts.init_db
+该 Compose 只启动 uPil 自己的 PostgreSQL、MinIO 和 Redis，不包含 RAGFlow。
 
-使用本地 SQLite 文件库启动 API：
+### 3. 初始化数据库
 
-$env:DATABASE_URL = "sqlite:///D:/uPil/data/upil.db"
-$env:LLM_ENABLED = "false"
-# 真实模型接入时再填写以下配置，并且不要把密钥提交到代码仓库：
-# $env:LLM_ENABLED = "true"
-# $env:LLM_BASE_URL = "https://your-openai-compatible-endpoint/v1"
-# $env:LLM_API_KEY = "your-api-key"
-# $env:LLM_MODEL = "your-model-name"
-# $env:RAGFLOW_BASE_URL = "http://localhost:19380"
-# $env:RAGFLOW_API_KEY = "your-ragflow-api-key"
-# $env:RAGFLOW_CHAT_ID = "your-chat-id"
-uvicorn backend.app.main:app --reload --port 8000
+```powershell
+python -m scripts.init_db --database-url "postgresql+psycopg://upil:upil@localhost:5432/upil"
+```
 
-健康检查：http://127.0.0.1:8000/api/v1/health
+### 4. 启动后端
 
-结构化学情联调接口：
+```powershell
+uvicorn backend.app.main:app --reload --host 127.0.0.1 --port 8000
+```
 
-http://127.0.0.1:8000/api/v1/learners/L1001/learning-snapshot
+健康检查：`http://127.0.0.1:8000/api/v1/health`。
 
-在默认 `demo` 模式下可以使用 `actor_role` 和 `actor_user_id` 模拟身份；切换为
-`trusted_headers` 后，这两个查询参数会被忽略，身份由认证代理 Header 和数据库共同确定。
+Windows 本机直接运行 WeasyPrint 时，除 Python 依赖外还必须安装兼容的
+Pango、GLib 原生运行库。`/api/v1/health/dependencies` 中的
+`pdf_renderer` 必须为 `ok` 才能在该 API 实例生成 PDF；若为 `error`，请使用
+Docker 完整运行环境，不要从本机开发 API 发起报告任务。
 
-## SSE 验证
+### 5. 启动前端开发服务器
 
-curl.exe -N -X POST http://127.0.0.1:8000/api/v1/chat/stream
-  -H "Content-Type: application/json"
-  -d '{"message":"查询课时和出勤","actor_role":"parent","actor_user_id":"P1001","learner_id":"L1001"}'
+```powershell
+Set-Location D:\uPil\frontend
+npm ci
+npm run dev
+```
 
-预期事件顺序包含 status(accepted)、status(routed)、多个 token 和 complete。
-如需多轮实体指代，在每轮请求中传入相同的 `conversation_id`；不传则保持
-向后兼容的单轮无状态行为。complete 事件还包含 `recognition_source`，用于
-区分真实模型、确定性高风险守卫和模型异常回退。
-FAQ 在配置 LangChain 模型后使用 astream 转发真实模型片段；未配置时使用固定回答切片，
-因此离线环境也能验证 SSE 协议。RAGFlow 当前使用非流式 Chat API，但会统一切片为 token，
-并在 complete.sources 中返回最多 10 条经过截断的来源引用。学情和人工分支仍由 LangGraph
-完整执行，完成事件会携带 provider 和 sources 字段。
+Vite 默认运行在 `http://127.0.0.1:5173`，并将 `/api` 请求代理到开发 API。
 
-完成事件示例：
+需要由 FastAPI 同源托管前端时，在 `frontend` 目录执行：
 
-{
-  "route": "faq",
-  "provider": "offline",
-  "sources": []
-}
+```powershell
+npm run build:backend
+```
 
-家长 P1001 只能查询已绑定的学员 L1001。
+然后访问 `http://127.0.0.1:8000/chat`。
 
-## 本地 HTTP A2A 演示
+### 6. 启用 RAGFlow 和 PDF 报告
 
-独立子服务入口为 `backend.app.a2a.mock_server:app`，默认监听建议端口为 8101。
-只有显式设置 `A2A_LEARNING_ENABLED=true`、`A2A_LEARNING_MODE=local_http`，并在
-主服务和子服务中配置相同的至少 16 位本地服务令牌时，主服务才会跨进程调用。
-详细启动命令、安全边界和测试结果参见：
-`D:/uPil/docs/技术方案/阶段13-D_独立HTTP-A2A学情分析子服务.md`。
-阶段 13-E 的任务幂等、TTL、容量限制和指标设计参见：
-`D:/uPil/docs/技术方案/阶段13-E_A2A任务幂等状态与可观测性.md`。
-阶段 13-F 的 DSH 门禁和适配器边界参见：
-`D:/uPil/docs/技术方案/阶段13-F_DSH受控执行门禁与适配器边界.md`。
+RAGFlow 使用独立编排，启动、模型配置和知识库初始化见 [infra/ragflow/README.md](infra/ragflow/README.md)。根 `.env` 需要配置：
 
-项目正式开发基线为 Python 3.11，版本由 .python-version 固定。Python 3.14 仅用于早期临时冒烟验证。
+```dotenv
+RAGFLOW_BASE_URL=http://localhost:29380
+RAGFLOW_API_KEY=...
+RAGFLOW_PUBLIC_CHAT_ID=...
+RAGFLOW_SERVICE_RULES_CHAT_ID=...
+```
 
-RAGFlow 本地服务：控制台 http://localhost:19080，OpenAI 兼容 API http://localhost:19380。
-当前还需要在控制台配置 Chat Model 和 Embedding Model，创建 Chat Assistant 后再填写
-RAGFLOW_API_KEY 与 RAGFLOW_CHAT_ID；未填写时 FAQ 会安全回退到离线回答。
+启用 PDF 私有交付前，确认中文字体存在且 MinIO 可访问：
 
-## 测试
+```dotenv
+MINIO_ENABLED=true
+REPORT_PDF_ENABLED=true
+REPORT_PDF_FONT_PATH=C:\Windows\Fonts\NotoSansSC-VF.ttf
+REPORT_PDF_BUCKET=upil-reports
+```
 
-pytest -q
+### 7. 可选 staging API
 
-默认测试不会访问真实模型，即使本地 .env 已配置 API Key。显式运行真实
-DeepSeek 意图识别评估：
+Staging API 使用独立 Compose，只编排 API 容器，并连接已经运行的 uPil 基础设施：
 
-    $env:PYTHONUTF8 = "1"
-    .\.venv\Scripts\python.exe -m scripts.evaluate_real_intent_model
+```powershell
+docker compose -f infra/staging/docker-compose.staging.yml up -d --build
+```
 
-显式运行真实模型 pytest 冒烟测试：
+启动后访问 `http://127.0.0.1:18000`。首次运行前需要按 staging 模板准备 `infra/staging/.env.staging`。
 
-    $env:UPIL_RUN_REAL_LLM_TESTS = "true"
-    .\.venv\Scripts\python.exe -m pytest tests/test_real_intent_model.py -q
+## Docker 与端口
 
-普通语义用例必须显示 source=model；实时名额、课时和出勤等高风险用例
-应显示 source=deterministic_guard。若出现 source=deterministic_fallback，
-说明模型调用或结构化校验失败，不能把回退恰好答对误报为真实模型成功。
+| 服务 | 默认地址或端口 | 编排归属 |
+| --- | --- | --- |
+| 开发 API | `http://127.0.0.1:8000` | 本机进程 |
+| Vite 前端 | `http://127.0.0.1:5173` | 本机进程 |
+| Staging API | `http://127.0.0.1:18000` | `infra/staging/docker-compose.staging.yml` |
+| PostgreSQL | `127.0.0.1:5432` | `infra/docker-compose.yml` |
+| uPil Redis | `127.0.0.1:16380` | `infra/docker-compose.yml` |
+| MinIO API | `http://127.0.0.1:29000` | `infra/docker-compose.yml` |
+| MinIO Console | `http://127.0.0.1:29001` | `infra/docker-compose.yml` |
+| RAGFlow Console | `http://127.0.0.1:29080` | RAGFlow 独立编排 |
+| RAGFlow API | `http://127.0.0.1:29380` | RAGFlow 独立编排 |
+| Ollama | `127.0.0.1:11528` | RAGFlow 本地模型环境 |
+
+RAGFlow 还维护自己的 Elasticsearch、MySQL 和 Valkey。它们不是 uPil 业务 PostgreSQL 和会话 Redis 的替代品，也不应共用数据卷或清理策略。
+
+## 关键配置
+
+| 配置 | 说明 | 默认状态 |
+| --- | --- | --- |
+| `AUTH_MODE` | `demo`、`trusted_headers` 或 `oidc_jwt` | `demo` |
+| `DATABASE_URL` | PostgreSQL 连接地址 | 本地 PostgreSQL |
+| `CONVERSATION_STORE_BACKEND` | 短期会话存储后端 | `redis` |
+| `REDIS_URL` | uPil 独立 Redis 地址 | 本地 `16380` |
+| `MEMORY_WRITE_ENABLED` | 结构化长期偏好写入 | 开启 |
+| `EPISODIC_MEMORY_ENABLED` | 情景向量记忆 | 关闭 |
+| `LLM_ENABLED` | 启用真实 OpenAI-compatible 模型 | 关闭 |
+| `LLM_ROUTER_MODEL` | 可选独立 Router 模型 | 复用主模型 |
+| `RAGFLOW_*` | RAGFlow 地址、密钥和两个 Chat ID | 需本地配置 |
+| `MINIO_ENABLED` | 将 MinIO 纳入对象存储与健康检查 | 关闭 |
+| `REPORT_PDF_ENABLED` | 启用 PDF 报告生成 | 关闭 |
+| `LEAD_CONTACT_ENCRYPTION_KEY` | 联系方式 Fernet 加密密钥 | 需安全注入 |
+| `LEAD_CONTACT_FINGERPRINT_KEY` | 联系方式 HMAC 指纹密钥 | 需安全注入 |
+| `LEAD_NOTIFICATION_ENABLED` | 启用招生线索外部提醒 | 关闭 |
+| `LEAD_NOTIFICATION_MIN_LEVEL` | 飞书通知最低意向等级 | `high` |
+| `FEISHU_WEBHOOK_URL` | 飞书群机器人 Webhook，禁止提交仓库 | 需安全注入 |
+
+完整示例见 [.env.example](.env.example)。启动前可运行配置审计：
+
+```powershell
+.\.venv\Scripts\python.exe -m scripts.audit_configuration
+```
+
+审计会检查弃用配置、敏感值误提交、生产模式认证、Redis、MinIO、报告和 RAGFlow 等组合约束。
+
+## 测试与质量门禁
+
+此运行交付副本不包含后端测试源码，不能直接执行 pytest。下列测试数字是开发工作区的历史验收记录；发布副本可执行配置审计、Python 编译检查、前端类型检查和生产构建。
+
+开发工作区后端测试（本交付副本不包含测试源码）：
+
+```powershell
+Set-Location D:\uPil
+.\.venv\Scripts\python.exe -m pytest -q
+```
+
+前端测试、类型检查和生产构建：
+
+```powershell
+Set-Location D:\uPil-deliverable\frontend
+npm test
+npm run typecheck
+npm run build
+npm run build:backend
+```
+
+Python 编译检查：
+
+```powershell
+Set-Location D:\uPil-deliverable
+.\.venv\Scripts\python.exe -m compileall -q backend scripts
+```
+
+最近一次项目闭环验证结果：
+
+- 后端：657 passed，8 skipped；
+- 前端 Vitest：30 passed；
+- `vue-tsc --noEmit` 通过；
+- Vite 生产构建和 `build:backend` 通过；
+- Python `compileall` 通过；
+- 生产 Python 文件超过 800 行：0。
+
+现有 7 条测试 warning 来自 FastAPI/Starlette 的弃用提示，不影响当前测试通过状态。
+
+## 当前边界与技术取舍
+
+- 项目可本地完整运行，但没有宣称已经生产上线。
+- 仓库没有真实机构数据，初始化内容用于开发和测评。
+- 认证层实现了 OIDC Resource Server 能力，但没有随仓库部署真实身份提供方。
+- A2A/DSH 已从运行链路、配置和部署中移除；统一学情能力通过进程内 Service、Tool 和 LangGraph 节点复用。
+- 情景向量长期记忆尚未启用；当前跨会话记忆使用 PostgreSQL 结构化偏好。
+- 报告只交付 PDF，不提供 CSV 双产物。
+- 不提供教师媒体工作台、运营后台、转化漏斗、综合教务、CRM、电话、短信或支付能力。
+- 报课意向 Agent 是旁路分析能力，不会绕过用户授权保存联系方式。
+- 飞书只接收低敏线索摘要并提醒顾问回 uPil 处理；线索池仍是唯一事实源，
+  通知失败由 PostgreSQL Outbox 自动重试，不回滚已保存的线索。
+- RAGFlow 负责知识检索，不负责 uPil 的身份授权、学情统计和业务状态。
+
+## 文档索引
+
+- [PROJECT_LOG](docs/PROJECT_LOG.md)：当前阶段实施记录、问题与验证结果。
+- [TECH_DECISIONS](docs/TECH_DECISIONS.md)：核心技术选型和取舍。
+- [PROJECT_HANDOFF](docs/PROJECT_HANDOFF.md)：项目交接和运行检查信息。
+- [DEFENSE_INTERVIEW_QA](docs/DEFENSE_INTERVIEW_QA.md)：项目级答辩与面试问答。
+- [真实场景多轮对话测评集](docs/测试与验收/项目收尾_真实场景多轮对话测评集.md)：课程、规则、报告、记忆和线索场景验收。
+- [多 Agent 意图决策与上下文治理](docs/技术方案/项目收尾_多Agent意图决策与上下文治理优化.md)：路由、状态机和评测方案。
+- [Agent 上下文与记忆治理](docs/技术方案/项目收尾_Agent上下文与记忆治理.md)：短期状态、长期偏好和隔离策略。
+- [移除 A2A 与统一学情分析 Agent](docs/技术方案/项目收尾_移除A2A与统一学情分析Agent.md)：当前方案与历史方案的取舍。
+- [Agent 生产代码模块化重构](docs/技术方案/项目收尾_Agent生产代码模块化重构与目录治理.md)：目录职责和依赖方向。
+- [招生线索 Outbox 与飞书通知闭环](docs/技术方案/项目收尾_招生线索Outbox与飞书通知闭环.md)：事件、重试、幂等和隐私边界。
+
+`docs/技术方案/阶段13-*` 及对应面试问答记录的是 A2A/DSH 历史探索过程。阅读这些文档时，应以本 README 和“项目收尾”系列文档描述的当前架构为准。
+
+## License
+
+本仓库当前未声明开源许可证，仅用于个人学习、作品展示和求职交流。

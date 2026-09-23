@@ -1,6 +1,6 @@
 """对话理解所需的结构化契约和确定性实体处理。
 
-本模块只负责可以稳定测试的基础能力：实体类型定义、课程名称标准化、
+本模块只负责：实体类型定义、课程名称标准化、
 显式纠正后的实体覆盖、基础指代消解和检索查询改写。结构化 LLM 调用与
 LangGraph 状态接入将在下一小步完成，避免一次改动影响现有 FAQ/SSE 链路。
 """
@@ -29,6 +29,7 @@ class IntentType(str, Enum):
     SCHEDULE_OR_SEAT = "schedule_or_seat"
     LEARNING_SUMMARY = "learning_summary"
     CLASS_LEARNING_SUMMARY = "class_learning_summary"
+    REPORT_HISTORY = "report_history"
     LEARNING_REPORT = "learning_report"
     FEE_REFUND = "fee_refund"
     SAFETY_HEALTH = "safety_health"
@@ -131,8 +132,22 @@ COURSE_ALIASES: dict[str, tuple[str, ...]] = {
 
 COURSE_CATEGORIES: tuple[str, ...] = ("舞蹈", "美术", "音乐", "编程")
 
+# 具体课程与课程大类的受控映射，用于指代消解时判断“这个编程班”是否
+# 仍然指向上一轮已经确认的具体班型。这里不承担课程目录展示职责，只提供
+# 对话状态层所需的最小分类信息，避免把宽泛的大类覆盖掉更精确的实体。
+COURSE_CATEGORY_BY_NAME: dict[str, str] = {
+    "舞蹈启蒙班": "舞蹈",
+    "中国舞基础班": "舞蹈",
+    "中国舞进阶班": "舞蹈",
+    "少儿美术创意班": "美术",
+    "素描基础班": "美术",
+    "音乐启蒙班": "音乐",
+    "童声合唱班": "音乐",
+    "少儿编程基础班": "编程",
+    "编程项目实践班": "编程",
+}
+
 # 班级名称必须通过内部白名单映射到稳定 ID，避免自然语言直接进入查询层。
-# 目前沿用项目已有的舞蹈班级，不新增课程或虚构 Python 班级。
 CLASS_ALIASES: dict[str, tuple[str, ...]] = {
     "CLASS_DANCE_01": ("舞蹈一班", "舞蹈1班", "中国舞一班", "中国舞1班"),
     "CLASS_DANCE_02": ("舞蹈二班", "舞蹈2班", "中国舞二班", "中国舞2班"),
@@ -158,6 +173,15 @@ COURSE_REFERENCES: tuple[str, ...] = (
     "这门课",
     "这个班",
     "该班",
+    "那个课程",
+    "那个班",
+    "它",
+)
+
+# 家长经常在“这个/那个”与“班”之间插入课程大类，例如“回到刚才那个
+# 编程班”。这类表达仍然是指代，不应被当作一次新的“编程大类”切换。
+_COURSE_CATEGORY_REFERENCE_PATTERN = re.compile(
+    r"(?:刚才|前面说的|上一个)?(?:这个|那个|该)(?:舞蹈|美术|音乐|编程)(?:班|课程|课)"
 )
 
 ATTRIBUTE_KEYWORDS: dict[str, tuple[str, ...]] = {
@@ -169,6 +193,16 @@ ATTRIBUTE_KEYWORDS: dict[str, tuple[str, ...]] = {
     "address": ("在哪里", "怎么走", "地址", "位置"),
     "schedule": ("排课", "什么时候上课", "上课时间", "时段"),
     "available_seats": ("名额", "空位", "还能报名"),
+    "price": ("多少钱", "价格", "费用", "收费"),
+    # 课程装备是稳定静态属性。显式建模后，“它需要自己买乐器吗”可以先完成
+    # 指代消解，再由受控目录直接回答，不必依赖外部知识服务的瞬时可用性。
+    "equipment": (
+        "乐器", "装备", "材料", "准备什么", "需要准备",
+        "自己买", "购买", "自带", "带什么", "电脑",
+    ),
+    "benefit": ("好处", "帮助", "作用", "培养什么"),
+    "trial_policy": ("试听", "体验课", "怎么体验"),
+    "class_size": ("多少人", "班额", "班级人数"),
 }
 
 
@@ -220,6 +254,23 @@ def _find_course_mention(text: str) -> tuple[str, str, int, int] | None:
     return None
 
 
+def _find_last_course_mention(text: str) -> tuple[str, str, int, int] | None:
+    """返回纠正语句中最后明确出现的课程。
+
+    “不是少儿编程基础班，是编程项目实践班”同时包含两个白名单课程。
+    普通的最长别名优先策略会误取被否定的旧课程，因此显式纠正时必须选择
+    位置靠后的新课程；同一位置仍以更长别名优先，避免截断标准课程名。
+    """
+
+    matches: list[tuple[str, str, int, int]] = []
+    for alias, canonical in COURSE_ALIAS_ENTRIES:
+        for found in re.finditer(re.escape(alias), text):
+            matches.append((alias, canonical, found.start(), found.end()))
+    if not matches:
+        return None
+    return max(matches, key=lambda item: (item[2], len(item[0])))
+
+
 def _find_class_mention(text: str) -> tuple[str, str, int, int] | None:
     """返回班级别名、稳定班级 ID 及其在原文中的起止位置。"""
 
@@ -267,8 +318,12 @@ def extract_entity_reference(message: str) -> EntityReference | None:
     if class_entity is not None:
         return class_entity
 
-    matched = _find_course_mention(message)
     is_correction = any(marker in message for marker in CORRECTION_MARKERS)
+    matched = (
+        _find_last_course_mention(message)
+        if is_correction
+        else _find_course_mention(message)
+    )
     if matched:
         alias, canonical, _, _ = matched
         return EntityReference(
@@ -307,7 +362,35 @@ def extract_requested_attributes(message: str) -> list[str]:
 def has_course_reference(message: str) -> bool:
     """判断文本是否包含可以安全绑定到课程实体的明确指代表达。"""
 
-    return any(reference in message for reference in COURSE_REFERENCES)
+    return any(reference in message for reference in COURSE_REFERENCES) or bool(
+        _COURSE_CATEGORY_REFERENCE_PATTERN.search(message)
+    )
+
+
+def _replace_course_references(message: str, entity_name: str) -> str:
+    """将普通课程指代和“那个编程班”类组合指代统一替换为标准课程名。"""
+
+    query = _COURSE_CATEGORY_REFERENCE_PATTERN.sub(entity_name, message)
+    for reference in COURSE_REFERENCES:
+        query = query.replace(reference, entity_name)
+    return query
+
+
+def _same_course_category(
+    active_entity: EntityReference | None,
+    mentioned_entity: EntityReference | None,
+) -> bool:
+    """判断当前大类提及是否与历史具体课程属于同一方向。"""
+
+    if active_entity is None or mentioned_entity is None:
+        return False
+    if active_entity.entity_type != EntityType.COURSE:
+        return False
+    if mentioned_entity.entity_type != EntityType.COURSE_CATEGORY:
+        return False
+    return COURSE_CATEGORY_BY_NAME.get(active_entity.entity_name or "") == (
+        mentioned_entity.entity_name
+    )
 
 
 def _rewrite_explicit_correction(
@@ -359,8 +442,9 @@ def rewrite_query(
 
     entity_name = active_entity.entity_name
     if has_course_reference(query):
-        for reference in COURSE_REFERENCES:
-            query = query.replace(reference, entity_name)
+        query = _replace_course_references(query, entity_name)
+        # “这个课程/这个班”替换后已经包含标准课程名；原句中的“适合哪
+        # 个孩子”等其余问题保持原样，不再重复拼接课程大类或课程名。
         return query, True
 
     # 省略“这个课程”的短追问只有在明确询问课程属性时才继承历史实体，
@@ -376,14 +460,23 @@ def resolve_turn(
     """解析一轮消息，并按“本轮明确实体优先”更新当前实体。"""
 
     mentioned_entity = extract_entity_reference(message)
-    resolved_active = mentioned_entity or active_entity
+    # “回到刚才那个编程班”“那个美术课程”中的大类词只是自然语言
+    # 指代的一部分，不是一次新的课程切换。若历史已有同方向具体课程，
+    # 保留具体课程并让查询改写使用它，防止后续回答退化成整个大类比较。
+    historical_category_reference = has_course_reference(message) and _same_course_category(
+        active_entity, mentioned_entity
+    )
+    effective_mentioned_entity = None if historical_category_reference else mentioned_entity
+    resolved_active = active_entity if historical_category_reference else (
+        mentioned_entity or active_entity
+    )
     rewritten_query, used_context = rewrite_query(
         message,
         active_entity=resolved_active,
-        mentioned_entity=mentioned_entity,
+        mentioned_entity=effective_mentioned_entity,
     )
     return TurnResolution(
-        mentioned_entity=mentioned_entity,
+        mentioned_entity=effective_mentioned_entity,
         active_entity=resolved_active,
         rewritten_query=rewritten_query,
         requested_attributes=extract_requested_attributes(message),

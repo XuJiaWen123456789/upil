@@ -1,0 +1,36 @@
+{
+  "name": "upil-web",
+  "version": "1.0.0",
+  "private": true,
+  "description": "uPil 家长与教师双角色业务工作台",
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc --noEmit && vite build",
+    "build:backend": "vue-tsc --noEmit && node scripts/build-backend.mjs",
+    "typecheck": "vue-tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "keywords": [
+    "vue",
+    "fastapi",
+    "education"
+  ],
+  "license": "UNLICENSED",
+  "type": "module",
+  "dependencies": {
+    "pinia": "^3.0.4",
+    "vue": "^3.5.42",
+    "vue-router": "^4.6.4"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.4",
+    "@vitejs/plugin-vue": "^6.0.8",
+    "@vue/test-utils": "^2.5.0",
+    "jsdom": "^26.1.0",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.6",
+    "vitest": "^3.2.7",
+    "vue-tsc": "^3.3.11"
+  }
+}

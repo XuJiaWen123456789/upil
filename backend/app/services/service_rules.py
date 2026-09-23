@@ -26,8 +26,7 @@ def _client(settings: Settings, ragflow: RagflowClient | None = None) -> Ragflow
 
     if ragflow is not None:
         return ragflow
-    chat_id = settings.ragflow_service_rules_chat_id or settings.ragflow_chat_id
-    return RagflowClient(settings, chat_id=chat_id)
+    return RagflowClient(settings, chat_id=settings.ragflow_service_rules_chat_id)
 
 
 def answer_service_rules_result(
@@ -39,7 +38,12 @@ def answer_service_rules_result(
     """返回服务规则回答；RAGFlow 不可用时保持保守兜底。"""
 
     current = settings or get_settings()
-    result = _client(current, ragflow).ask_result(question)
+    try:
+        result = _client(current, ragflow).ask_result(question)
+    except Exception:
+        # 服务规则不能把第三方连接错误透传给用户，也不能因 RAGFlow 瞬时
+        # 故障中断对话；失败时使用保守固定回答，不猜测机构政策。
+        result = None
     if result:
         # 统一清理 RAGFlow 管理信息，避免内部引用标记进入用户端正文。
         result.answer = sanitize_public_faq_answer(result.answer)
@@ -76,10 +80,14 @@ async def stream_service_rules_answer(
     """将服务规则 Assistant 的回答转换为统一 SSE 片段。"""
 
     current = settings or get_settings()
-    result = await asyncio.to_thread(
-        _client(current, ragflow).ask_result,
-        question,
-    )
+    try:
+        result = await asyncio.to_thread(
+            _client(current, ragflow).ask_result,
+            question,
+        )
+    except Exception:
+        # 统一收敛线程中的第三方异常，保证 SSE 返回完整的离线回答。
+        result = None
     if result:
         result.answer = sanitize_public_faq_answer(result.answer)
         # 当前 RAGFlow 适配器取完整回答；这里分片只负责协议兼容。

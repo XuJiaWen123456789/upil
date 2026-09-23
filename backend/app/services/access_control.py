@@ -9,8 +9,7 @@ from dataclasses import dataclass
 from sqlalchemy import exists, select
 from sqlalchemy.orm import Session
 
-from backend.app.models import ClassGroup, Enrollment, ParentLearner
-from backend.app.models import MediaAsset
+from backend.app.models import ClassGroup, Enrollment, EnrollmentLead, ParentLearner
 
 
 @dataclass(frozen=True)
@@ -20,52 +19,37 @@ class AccessContext:
     user_id: str
     role: str
     campus_ids: frozenset[str] = frozenset()
+    # 权限只允许由认证层从本地数据库注入。使用不可变集合可以防止业务节点
+    # 在请求执行过程中临时追加能力，保持整条调用链上的授权结论一致。
+    permissions: frozenset[str] = frozenset()
+    # 当前项目暂未开放租户切换；保留显式边界是为了让会话和长期记忆在
+    # 多机构部署时不会只依赖 user_id 猜测数据归属。默认值兼容所有旧调用。
+    tenant_id: str = "default"
 
 
-def can_manage_media(context: AccessContext) -> bool:
-    """判断是否允许上传或审核媒体资产。"""
+def can_manage_leads(context: AccessContext) -> bool:
+    """顾问工作区必须同时满足教师角色和明确的线索跟进权限。"""
 
-    # 教师可提交课程资料，管理员负责审核；家长不能把文件写入机构知识资源。
-    return context.role in {"teacher", "admin"}
+    return context.role == "teacher" and "lead_followup" in context.permissions
 
 
-def can_access_media(context: AccessContext, asset: MediaAsset) -> bool:
-    """按角色、可见范围和审核状态判断媒体是否可以生成访问地址。"""
+def can_follow_up_lead(context: AccessContext, lead: EnrollmentLead) -> bool:
+    """未分配线索可由顾问领取，已分配线索只允许原顾问继续处理。"""
 
-    # 未审核或已拒绝的素材不能对普通用户开放；管理员可查看待审核素材。
-    if asset.review_status == "rejected":
-        return False
-    if asset.review_status != "approved":
-        return context.role == "admin"
-    if context.role == "admin":
-        return True
-    if context.role == "parent":
-        return asset.visibility == "public_faq"
-    if context.role == "teacher":
-        return asset.visibility in {"public_faq", "internal_staff"}
-    return False
+    return can_manage_leads(context) and lead.assigned_advisor_id in {
+        None,
+        context.user_id,
+    }
 
 
 def can_access_learner(session: Session, context: AccessContext, learner_id: str) -> bool:
     """判断当前用户是否可以访问指定学员。
 
-    家长依赖绑定关系，教师依赖授课班级和校区范围，管理员可按校区范围
-    限制访问。未知角色默认拒绝，遵循最小权限原则。
+    家长依赖绑定关系，教师依赖授课班级、有效报名和校区范围。未知角色
+    默认拒绝，遵循最小权限原则。
     """
 
     # 权限判断在读取学员数据之前执行，调用方拿不到越权对象的差异化信息。
-    if context.role == "admin":
-        if not context.campus_ids:
-            return True
-        return session.scalar(
-            select(exists().where(
-                ClassGroup.campus_id.in_(context.campus_ids),
-                ClassGroup.id == Enrollment.class_id,
-                Enrollment.learner_id == learner_id,
-                Enrollment.is_active.is_(True),
-            ))
-        )
-
     if context.role == "parent":
         # 家长只能访问显式绑定的学员，不能仅凭 learner_id 猜测数据。
         return bool(session.scalar(select(exists().where(
@@ -74,15 +58,17 @@ def can_access_learner(session: Session, context: AccessContext, learner_id: str
         ))))
 
     if context.role == "teacher":
-        # 教师同时受授课关系和校区范围约束，避免跨班级/跨校区读取。
+        # 认证层正常情况下必定注入教师校区。授权层仍对空范围失败关闭，
+        # 形成纵深防御，避免测试桩或未来调用方误把空集合解释成无限范围。
+        if not context.campus_ids:
+            return False
         conditions = [
             ClassGroup.teacher_id == context.user_id,
             ClassGroup.id == Enrollment.class_id,
             Enrollment.learner_id == learner_id,
             Enrollment.is_active.is_(True),
+            ClassGroup.campus_id.in_(context.campus_ids),
         ]
-        if context.campus_ids:
-            conditions.append(ClassGroup.campus_id.in_(context.campus_ids))
         return bool(session.scalar(select(exists().where(*conditions))))
 
     return False
@@ -93,24 +79,22 @@ def can_access_class(session: Session, context: AccessContext, class_id: str) ->
 
     班级统计包含多名学员的出勤和课时信息，权限不能复用“家长可查看本人
     学员”的规则。家长一律不能读取班级级统计；教师只能读取自己授课的
-    有效班级；管理员可读取自己授权校区内的有效班级。
+    有效班级。校区字段仅用于教师跨校区隔离，不代表系统提供校区运营端。
     """
 
     # 权限判断先于任何班级详情查询，统一将“不存在”和“无权限”处理为 False。
     base_conditions = [ClassGroup.id == class_id, ClassGroup.is_active.is_(True)]
 
-    if context.role == "admin":
-        # 空 campus_ids 表示演示环境中的全局管理员；生产环境应由认证系统
-        # 明确注入授权校区范围，而不是依赖客户端传入的角色字段。
-        if context.campus_ids:
-            base_conditions.append(ClassGroup.campus_id.in_(context.campus_ids))
-        return bool(session.scalar(select(exists().where(*base_conditions))))
-
     if context.role == "teacher":
-        # 教师必须是该班级的授课教师，同时可选地受校区范围约束。
+        # 销售顾问老师与授课教师复用 teacher 身份类型，但权限画像互斥。
+        # 即使未来误把顾问账号关联到班级，也不能绕过前端导航直接读取班级聚合数据。
+        if can_manage_leads(context):
+            return False
+        # 教师必须同时具备授课关系和明确校区范围，任一条件缺失都拒绝。
+        if not context.campus_ids:
+            return False
         base_conditions.append(ClassGroup.teacher_id == context.user_id)
-        if context.campus_ids:
-            base_conditions.append(ClassGroup.campus_id.in_(context.campus_ids))
+        base_conditions.append(ClassGroup.campus_id.in_(context.campus_ids))
         return bool(session.scalar(select(exists().where(*base_conditions))))
 
     # 家长和未知角色不能通过 class_id 读取包含其他学员的数据。

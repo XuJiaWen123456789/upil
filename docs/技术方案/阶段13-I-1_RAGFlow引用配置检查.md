@@ -1,5 +1,7 @@
 # 阶段 13-I-1：RAGFlow Assistant 引用配置检查
 
+> 历史状态：本文件记录阶段 13 的 A2A/DSH 协议实验。当前生产代码、配置和部署已经移除 A2A/DSH，现行方案见 `docs/技术方案/项目收尾_移除A2A与统一学情分析Agent.md`。
+
 ## 1. 阶段定位
 
 本阶段属于 uPil 本地 staging 环境的 RAGFlow 真实 FAQ 链路验证，目标是确认：

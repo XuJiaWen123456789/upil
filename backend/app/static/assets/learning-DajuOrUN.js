@@ -1,0 +1,1 @@
+import{r as e}from"./index-DiyT744K.js";function i(n){return e("/api/v1/learners/"+encodeURIComponent(n)+"/learning-snapshot")}function p(n,r,a,o=5){const t=new URLSearchParams({period_start:r,period_end:a,low_balance_threshold:String(o)});return e("/api/v1/classes/"+encodeURIComponent(n)+"/learning-summary?"+t.toString())}export{p as a,i as g};

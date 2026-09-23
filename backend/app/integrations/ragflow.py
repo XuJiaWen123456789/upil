@@ -19,10 +19,10 @@ class RagflowClient:
     OPENAI_CHAT_PATH = "/api/v1/openai/{chat_id}/chat/completions"
 
     def __init__(self, settings: Settings | None = None, chat_id: str | None = None) -> None:
-        """保存配置快照，并允许业务智能体显式指定自己的 Assistant。
+        """保存配置快照，并要求业务智能体显式指定自己的 Assistant。
 
-        显式 Chat ID 用于隔离公开咨询和服务规则两个知识域；为空时保留
-        旧版单 Chat ID 配置的兼容行为，避免已有本地测试和部署配置中断。
+        公开咨询和服务规则属于不同知识域。适配器不再接受旧版全局 Chat ID
+        回退，避免一个环境漏配时把服务规则问题错误发送到公开咨询知识库。
         """
 
         self.settings = settings or get_settings()
@@ -32,7 +32,7 @@ class RagflowClient:
         """向知识库提问并提取统一结果，失败时返回 None。"""
 
         settings = self.settings
-        chat_id = self.chat_id or settings.ragflow_chat_id
+        chat_id = (self.chat_id or "").strip()
         if not settings.ragflow_api_key or not chat_id:
             return None
 

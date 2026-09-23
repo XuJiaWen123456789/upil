@@ -8,9 +8,18 @@ dependencies = [
 	"httpx>=0.27,<1.0",
 	"langchain>=1.0,<2.0",
 	"langgraph>=1.0,<2.0",
+	# OIDC 模式只接受非对称 JWT；crypto extra 提供 RSA/ECDSA 验签实现。
+	"PyJWT[crypto]>=2.10,<3.0",
+	# 招生联系方式使用 Fernet 加密和 HMAC 指纹；显式声明直接依赖，
+	# 不依赖 PyJWT 的传递依赖恰好安装 cryptography。
+	"cryptography>=45.0,<51.0",
 	"python-multipart>=0.0.20,<1.0",
 	"psycopg[binary]>=3.2,<4.0",
 	"pydantic-settings>=2.0,<3.0",
+	# 报告正文先在内存中生成受控 Markdown，再由共享转换器生成 PDF。
+	"markdown-it-py>=3.0,<5.0",
+	"pypdf>=5.0,<6.0",
+	"weasyprint>=66.0,<67.0",
 	"sqlalchemy>=2.0,<3.0",
 	"uvicorn[standard]>=0.30,<1.0",
 ]
@@ -19,12 +28,15 @@ dependencies = [
 dev = [
 	"pytest>=8.0,<9.0",
 ]
+memory = [
+	"redis>=5.0,<6.0",
+]
 llm = [
 	# 项目主体已使用 LangChain 1.x；同步使用 1.x 的 OpenAI-compatible 适配器，
 	# 避免旧版适配器与 langchain-core 的结构化输出接口不一致。
 	"langchain-openai>=1.0,<2.0",
 ]
-media = [
+storage = [
 	"minio>=7.2,<8.0",
 ]
 

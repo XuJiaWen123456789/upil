@@ -26,3 +26,7 @@ infra/ragflow/
 .vscode/
 *.log
 Thumbs.db
+
+# 前端依赖和本地构建产物由镜像内 npm ci / npm run build 重新生成。
+frontend/node_modules/
+frontend/dist/

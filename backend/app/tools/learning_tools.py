@@ -119,7 +119,7 @@ def query_learning_progress(
     if not PROGRESS_FILE.exists():
         return []
 
-    # 进度资料是演示用结构化快照；生产环境应替换为教务系统只读接口。
+    # 进度资料是本地结构化快照；正式环境应替换为教务系统只读接口。
     raw_records = json.loads(PROGRESS_FILE.read_text(encoding="utf-8"))
     return [
         ProgressRecord.model_validate(record)

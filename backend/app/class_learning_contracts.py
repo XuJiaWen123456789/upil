@@ -1,7 +1,7 @@
 """班级级学情分析的数据契约。
 
 本模块只描述经过授权和确定性计算后的班级统计结果，不负责查询数据库、
-调用大模型或执行远程任务。后续 A2A/DSH 报表节点只能接收脱敏后的聚合
+调用大模型或执行远程任务。后续本地报告模板只能接收经过校验的聚合
 结果，不能直接接触本模块对应的 ORM 查询对象。
 
 契约的意义是把“统计口径”和“数据结构”固定下来：数据库查询可以演进，
@@ -19,7 +19,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 class ClassLearnerMetric(BaseModel):
     """班级内单名学员的统计指标。
 
-    该模型服务于已授权的教师或管理员内部查询；发送给远程报表节点前，
+    该模型服务于已授权教师的内部查询；发送给报表节点前，
     应将 learner_id 和 learner_name 替换为不可逆的匿名引用或掩码。
     """
 
@@ -53,7 +53,7 @@ class ClassLearnerMetric(BaseModel):
 class ClassLearningSummary(BaseModel):
     """经过权限校验后的班级学情汇总结果。
 
-    该模型仍可能包含单名学员的内部统计行，因此返回给 A2A/DSH 前必须
+    该模型仍可能包含单名学员的内部统计行，因此写入下载产物前必须
     按调用场景进行匿名化；“已经通过 Pydantic 校验”不等于“可以直接外发”。
     """
 

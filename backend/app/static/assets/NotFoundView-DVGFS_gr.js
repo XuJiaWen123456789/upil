@@ -1,0 +1,1 @@
+import{o as r,c as a,e as o}from"./index-DiyT744K.js";const l=(t,e)=>{const s=t.__vccOpts||t;for(const[n,c]of e)s[n]=c;return s},_={},p={class:"empty-state"};function f(t,e){return r(),a("section",p,[...e[0]||(e[0]=[o("span",{class:"eyebrow"},"404",-1),o("h1",null,"页面不存在",-1),o("p",null,"请从左侧导航进入已授权的工作区。",-1)])])}const d=l(_,[["render",f]]);export{d as default};

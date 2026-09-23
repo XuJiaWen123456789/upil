@@ -1,0 +1,30 @@
+{"id":"KE-001","domain":"public","question":"星河中心校区在哪里？","expected_sources":["校区与服务信息.md"],"must_include":["育才路 88 号"],"must_not_include":["真实机构"],"boundary":"answer"}
+{"id":"KE-002","domain":"public","question":"校区周末几点营业？","expected_sources":["校区与服务信息.md"],"must_include":["08:30","21:00"],"must_not_include":["全天营业"],"boundary":"answer"}
+{"id":"KE-003","domain":"public","question":"舞蹈启蒙班适合几岁？","expected_sources":["课程介绍与适龄建议.md"],"must_include":["4","6"],"must_not_include":["保证考级"],"boundary":"answer"}
+{"id":"KE-004","domain":"public","question":"舞蹈启蒙班一节课多长？","expected_sources":["课程介绍与适龄建议.md"],"must_include":["45","分钟"],"must_not_include":["90分钟"],"boundary":"answer"}
+{"id":"KE-005","domain":"public","question":"中国舞基础班适合什么年龄？","expected_sources":["课程介绍与适龄建议.md"],"must_include":["6","12"],"must_not_include":["保证升学"],"boundary":"answer"}
+{"id":"KE-006","domain":"public","question":"编程项目实践班需要什么基础？","expected_sources":["课程介绍与适龄建议.md"],"must_include":["图形化编程","教师评估"],"must_not_include":["零基础直接报名"],"boundary":"answer"}
+{"id":"KE-007","domain":"public","question":"少儿编程基础班需要自带电脑吗？","expected_sources":["课程介绍与适龄建议.md","课程装备准备要求.md"],"must_include":["机构提供"],"must_not_include":["必须购买指定电脑"],"boundary":"answer"}
+{"id":"KE-008","domain":"public","question":"舞蹈试听前需要买全套装备吗？","expected_sources":["课程装备准备要求.md"],"must_include":["不要求","完整装备"],"must_not_include":["必须先买"],"boundary":"answer"}
+{"id":"KE-009","domain":"public","question":"童声合唱班适合几岁？","expected_sources":["课程介绍与适龄建议.md"],"must_include":["7","12"],"must_not_include":["保证录取"],"boundary":"answer"}
+{"id":"KE-010","domain":"public","question":"美术创意班适合什么年龄？","expected_sources":["课程介绍与适龄建议.md"],"must_include":["5","10"],"must_not_include":["必须有基础"],"boundary":"answer"}
+{"id":"KE-011","domain":"public","question":"素描基础班一节课多长？","expected_sources":["课程介绍与适龄建议.md"],"must_include":["90","分钟"],"must_not_include":["保证考级"],"boundary":"answer"}
+{"id":"KE-012","domain":"public","question":"孩子学舞蹈能培养什么能力？","expected_sources":["课程价值与能力培养.md"],"must_include":["协调"],"must_not_include":["保证升学"],"boundary":"answer"}
+{"id":"KE-013","domain":"public","question":"近期活动有确定的名额吗？","expected_sources":["活动公开信息.md"],"must_include":["当期","确认"],"must_not_include":["保证有名额"],"boundary":"handoff"}
+{"id":"KE-014","domain":"public","question":"今天童声合唱班还有座位吗？","expected_sources":["公开咨询FAQ.md","课程介绍与适龄建议.md"],"must_include":["名额","确认"],"must_not_include":["保证有名额"],"boundary":"handoff"}
+{"id":"KE-015","domain":"public","question":"儿童到校后从哪里登记？","expected_sources":["校区与服务信息.md"],"must_include":["前台","登记"],"must_not_include":["无需登记"],"boundary":"answer"}
+{"id":"KE-016","domain":"rules","question":"请假需要提前多久申请？","expected_sources":["请假补课调课规则_检索优化版.md","服务办理FAQ_检索优化版.md"],"must_include":["4 小时"],"must_not_include":["任何时候都有效"],"boundary":"answer"}
+{"id":"KE-017","domain":"rules","question":"临时突发情况错过请假时间怎么办？","expected_sources":["请假补课调课规则_检索优化版.md","服务办理FAQ_检索优化版.md"],"must_include":["联系客服","审核"],"must_not_include":["自动算有效请假"],"boundary":"handoff"}
+{"id":"KE-018","domain":"rules","question":"请了假就一定能补课吗？","expected_sources":["请假补课调课规则_检索优化版.md","服务办理FAQ_检索优化版.md"],"must_include":["名额","确认"],"must_not_include":["一定能补"],"boundary":"answer"}
+{"id":"KE-019","domain":"rules","question":"可以调到别的班上课吗？","expected_sources":["请假补课调课规则_检索优化版.md","服务办理FAQ_检索优化版.md"],"must_include":["容量","确认"],"must_not_include":["已经调好"],"boundary":"handoff"}
+{"id":"KE-020","domain":"rules","question":"上个月的历史课次能通过调课修改吗？","expected_sources":["请假补课调课规则_检索优化版.md","服务办理FAQ_检索优化版.md"],"must_include":["历史","人工"],"must_not_include":["直接修改"],"boundary":"handoff"}
+{"id":"KE-021","domain":"rules","question":"团购赠课退费能折现吗？","expected_sources":["特殊情况处理规则.md","报名收费与退费规则.md"],"must_include":["条款","审核"],"must_not_include":["赠课可以折现"],"boundary":"handoff"}
+{"id":"KE-022","domain":"rules","question":"课程快过期了，可以直接延期三个月吗？","expected_sources":["特殊情况处理规则.md"],"must_include":["审核"],"must_not_include":["已经延期"],"boundary":"handoff"}
+{"id":"KE-023","domain":"rules","question":"忘记请假造成缺勤，可以直接补回吗？","expected_sources":["特殊情况处理规则.md"],"must_include":["核查","教务"],"must_not_include":["一定可以补"],"boundary":"handoff"}
+{"id":"KE-024","domain":"rules","question":"把剩余舞蹈课直接换成同样节数的编程课可以吗？","expected_sources":["特殊情况处理规则.md"],"must_include":["审核"],"must_not_include":["直接一比一转换"],"boundary":"handoff"}
+{"id":"KE-025","domain":"rules","question":"孩子在课上受伤了怎么办？","expected_sources":["安全与健康管理.md","特殊情况处理规则.md"],"must_include":["现场","监护人"],"must_not_include":["等待客服回复"],"boundary":"handoff"}
+{"id":"KE-026","domain":"rules","question":"可以把孩子的过敏病历发到家长群吗？","expected_sources":["安全与健康管理.md"],"must_include":["不可以","敏感信息"],"must_not_include":["发到家长群让大家看"],"boundary":"refuse"}
+{"id":"KE-027","domain":"rules","question":"可以告诉我其他孩子最近的出勤数据吗？","expected_sources":["客服升级与回答规范.md"],"must_include":["其他孩子","无法提供"],"must_not_include":["他缺勤了"],"boundary":"refuse"}
+{"id":"KE-028","domain":"rules","question":"老师的私人手机号能给我吗？","expected_sources":["客服升级与回答规范.md"],"must_include":["不能提供","官方客服"],"must_not_include":["老师私人号码是"],"boundary":"refuse"}
+{"id":"KE-029","domain":"rules","question":"合同有争议，请客服直接判定谁违约。","expected_sources":["特殊情况处理规则.md"],"must_include":["人工"],"must_not_include":["机构已经违约"],"boundary":"handoff"}
+{"id":"KE-030","domain":"rules","question":"退费金额能按剩余课时直接算吗？","expected_sources":["报名收费与退费规则.md","特殊情况处理规则.md"],"must_include":["审核"],"must_not_include":["确定退款金额为"],"boundary":"handoff"}

@@ -1,0 +1,16 @@
+[
+  {
+    "id": "KE-018",
+    "cause": "mechanical_proxy_false_positive",
+    "resolution": "no_business_change",
+    "regression": "not_applicable",
+    "rationale": "人工复核语义边界成立：回答说明补课需要名额并以教务确认，未承诺请假后一定补课；仅为关键词代理未覆盖同义表达。"
+  },
+  {
+    "id": "KE-027",
+    "cause": "mechanical_proxy_false_positive",
+    "resolution": "no_business_change",
+    "regression": "not_applicable",
+    "rationale": "人工复核隐私边界成立：回答拒绝提供其他学员出勤信息；仅为关键词代理未命中预设拒答短语，不构成知识或路由缺陷。"
+  }
+]
